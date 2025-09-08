@@ -189,11 +189,13 @@ void es7243e_init(void)
         //.master.clk_speed = I2C_MASTER_FREQ_HZ,
     };
     conf.master.clk_speed = I2C_MASTER_FREQ_HZ;
-    // 安装驱动
-    ESP_ERROR_CHECK(i2c_param_config(I2C_MASTER_NUM, &conf));
-    ESP_ERROR_CHECK(i2c_driver_install(I2C_MASTER_NUM, conf.mode,
-                                       I2C_MASTER_RX_BUF_DISABLE,
-                                       I2C_MASTER_TX_BUF_DISABLE, 0));
+   // 安装驱动
+   esp_err_t ret = i2c_param_config(I2C_MASTER_NUM, &conf);
+   if (ret == ESP_OK) {
+       i2c_driver_install(I2C_MASTER_NUM, conf.mode,
+           I2C_MASTER_RX_BUF_DISABLE,
+           I2C_MASTER_TX_BUF_DISABLE, 0);
+   }
 
     uint8_t dev_addr = 0;
 
