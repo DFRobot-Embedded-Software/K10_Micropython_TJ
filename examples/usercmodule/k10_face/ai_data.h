@@ -24,7 +24,7 @@ typedef struct _ai_data_obj_t {
         int cat_frame_width;
     } cat_detect;
 
-    char* code_data;
+    const char* code_data;
     bool move_flag;
     bool face_flag;
     bool cat_flag;

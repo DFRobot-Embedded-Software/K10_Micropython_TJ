@@ -40,7 +40,7 @@ extern "C" {
 
 
 
-static QueueHandle_t ai_camera_queue = NULL;
+static QueueHandle_t camera_queue = NULL;
 static face_info_t recognize_result;
 
 extern "C" int register_face_flag;
@@ -59,28 +59,77 @@ esp_err_t xl9555_read_ai(uint8_t reg, uint8_t *data) {
 }
 
 
+static void draw_detection_result(uint16_t *image_ptr, int image_height, int image_width, std::list<dl::detect::result_t> &results)
+{
+    int i = 0;
+    for (std::list<dl::detect::result_t>::iterator prediction = results.begin(); prediction != results.end(); prediction++, i++)
+    {
+        dl::image::draw_hollow_rectangle(image_ptr, image_height, image_width,
+                                         DL_MAX(prediction->box[0], 0),
+                                         DL_MAX(prediction->box[1], 0),
+                                         DL_MAX(prediction->box[2], 0),
+                                         DL_MAX(prediction->box[3], 0),
+                                         0b1110000000000111);
+    }
+
+}
+
+// 初始化AI数据结构体
+void init_ai_data(ai_data_obj_t *data) {
+    // 清零整个结构体
+    memset(data, 0, sizeof(ai_data_obj_t));
+    
+    // 设置默认值
+    data->face_flag = false;
+    data->cat_flag = false;
+    data->code_flag = false;
+    data->move_flag = false;
+    
+    // 初始化人脸检测数据
+    data->face_detect.face_id = -1;
+    data->face_detect.face_frame_length = 0;
+    data->face_detect.face_frame_width = 0;
+    
+    // 初始化面部特征点坐标
+    data->face_detect.face_left_eys[0] = 0;
+    data->face_detect.face_left_eys[1] = 0;
+    data->face_detect.face_right_eys[0] = 0;
+    data->face_detect.face_right_eys[1] = 0;
+    data->face_detect.face_nose[0] = 0;
+    data->face_detect.face_nose[1] = 0;
+    data->face_detect.face_left_mouth[0] = 0;
+    data->face_detect.face_left_mouth[1] = 0;
+    data->face_detect.face_right_mouth[0] = 0;
+    data->face_detect.face_right_mouth[1] = 0;
+    
+    // 初始化猫咪检测数据
+    data->cat_detect.cat_frame_length = 0;
+    data->cat_detect.cat_frame_width = 0;
+    
+    // 初始化二维码数据
+    data->code_data = NULL;
+}
+
+
 static ai_data_obj_t g_ai_data;
 
-extern "C" __attribute__((weak)) void ai_camera_task(void* arg) {
+extern "C" __attribute__((weak)) void camera_start_task(void* arg) {
     
-    if (!ai_camera_queue) {
-        ai_camera_queue = xQueueCreate(10, sizeof(camera_fb_t *)); // 最多缓存10个结果
+    if (!camera_queue) {
+        camera_queue = xQueueCreate(10, sizeof(camera_fb_t *)); // 最多缓存10个结果
     }
     
     while (1) {
-        //xl9555_write_ai(0x03, 0x80);
         camera_fb_t *frame = esp_camera_fb_get();
         if (frame){
-            xQueueSend(ai_camera_queue, &frame, portMAX_DELAY);
+            xQueueSend(camera_queue, &frame, portMAX_DELAY);
         }
-        //vTaskDelay(pdMS_TO_TICKS(50));
-        //xl9555_write_ai(0x03, 0x00);
-        vTaskDelay(pdMS_TO_TICKS(50));
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
 
 
-extern "C" __attribute__((weak))  void ai_task(void* arg) {
+extern "C" __attribute__((weak))  void face_recognize_start_task(void* arg) {
 
     
     HumanFaceDetectMSR01 detectorFace(0.3F, 0.3F, 10, 0.3F);
@@ -88,18 +137,13 @@ extern "C" __attribute__((weak))  void ai_task(void* arg) {
     FaceRecognition112V1S16  *recognizer = new FaceRecognition112V1S16();
     recognizer->set_partition(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "fr");
     recognizer->set_ids_from_flash();
-   
-    
     // 初始化AI数据
-    memset(&g_ai_data, 0, sizeof(g_ai_data));
+    init_ai_data(&g_ai_data);
 
     camera_fb_t *frame = NULL;
 
-     
-
     while (1) {
-        //mp_print_face_cstr("ai_task\n");
-        if(xQueueReceive(ai_camera_queue, &frame, portMAX_DELAY) == pdPASS) {
+        if(xQueueReceive(camera_queue, &frame, portMAX_DELAY) == pdPASS) {
             if (frame && frame->buf) {
 
             }
@@ -109,12 +153,21 @@ extern "C" __attribute__((weak))  void ai_task(void* arg) {
                 
                 if (detect_results.size() > 0) {
                     xl9555_write_ai(0x03, 0x80);
-                    //mp_print_face_cstr("face detected\n");
                     g_ai_data.face_flag = true;
                     std::list<dl::detect::result_t>::iterator first_result = detect_results.begin();
                     if (first_result != detect_results.end()) {
                         g_ai_data.face_detect.face_frame_length = (int)first_result->box[2] - (int)first_result->box[0];
                         g_ai_data.face_detect.face_frame_width = (int)first_result->box[3] - (int)first_result->box[1];
+                        g_ai_data.face_detect.face_left_eys[0] = (int)first_result->keypoint[0];
+                        g_ai_data.face_detect.face_left_eys[1] = (int)first_result->keypoint[1];
+                        g_ai_data.face_detect.face_right_eys[0] = (int)first_result->keypoint[6];
+                        g_ai_data.face_detect.face_right_eys[1] = (int)first_result->keypoint[7];
+                        g_ai_data.face_detect.face_nose[0] = (int)first_result->keypoint[4];
+                        g_ai_data.face_detect.face_nose[1] = (int)first_result->keypoint[5];
+                        g_ai_data.face_detect.face_left_mouth[0] = (int)first_result->keypoint[2];
+                        g_ai_data.face_detect.face_left_mouth[1] = (int)first_result->keypoint[3];
+                        g_ai_data.face_detect.face_right_mouth[0] = (int)first_result->keypoint[8];
+                        g_ai_data.face_detect.face_right_mouth[1] = (int)first_result->keypoint[9];
                     }
                     
                     if(register_face_flag == 1){
@@ -124,15 +177,13 @@ extern "C" __attribute__((weak))  void ai_task(void* arg) {
 
                     if(recognize_face_flag == 1){
                         recognize_result = recognizer->recognize((uint16_t *)frame->buf, {(int)frame->height, (int)frame->width, 3}, detect_results.front().keypoint);
-                        //g_ai_data.face_detect.face_id = recognize_result.id;
-                        //mp_print_face_cstr("Recognize face success\n");
+                        g_ai_data.face_detect.face_id = recognize_result.id;
                         recognize_face_flag = 0;
                     }
-                    
-                    
+                    //画框
+                    draw_detection_result((uint16_t *)frame, (int)frame->height, (int)frame->width, detect_results);
                 } else {
                     xl9555_write_ai(0x03, 0x00);
-                    //mp_print_face_cstr("no face detected\n");
                     g_ai_data.face_flag = false;
                     g_ai_data.face_detect.face_id = -1;
                 }
@@ -158,7 +209,6 @@ extern "C" __attribute__((weak)) void init_ai(void)
         .scl_io_num = I2C_MASTER_SCL_IO,
         .sda_pullup_en = GPIO_PULLUP_ENABLE,
         .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        //.master.clk_speed = I2C_MASTER_FREQ_HZ,
     };
     conf.master.clk_speed = I2C_MASTER_FREQ_HZ;
     // 安装驱动
@@ -177,11 +227,112 @@ extern "C" __attribute__((weak)) void init_ai(void)
     // 修改 bit7 为 0（输出）
     confData0 &= ~(1 << 7);
     xl9555_write_ai(0x07, confData0);
-    xl9555_write_ai(0x06, 0xfb);
+    confData1 &= ~(1 << 1);
+    xl9555_write_ai(0x06, confData1);
     xl9555_write_ai(0x02, 0x00);
     vTaskDelay(pdMS_TO_TICKS(100));
     xl9555_write_ai(0x02, 0x02);
     vTaskDelay(pdMS_TO_TICKS(100));
     //默认关闭用户灯
     xl9555_write_ai(0x03, 0x00);
+
+    register_face_flag = 0;
+    recognize_face_flag = 0;
+    remove_face_flag = 0;
+    reset_faces_flag = 0;
+
+}
+
+extern "C" __attribute__((weak)) void cat_detect_task(void* arg) {
+    static CatFaceDetectMN03 detectorCat(0.4F, 0.3F, 10, 0.3F);
+    // 初始化AI数据
+    init_ai_data(&g_ai_data);
+
+    camera_fb_t *frame = NULL;
+    while (1) {
+        if(xQueueReceive(camera_queue, &frame, portMAX_DELAY) == pdPASS) {
+            if (frame && frame->buf) {
+            }
+
+            std::list<dl::detect::result_t> &detect_candidates =  detectorCat.infer((uint16_t *)frame->buf, {(int)frame->height, (int)frame->width, 3});
+            if (detect_candidates.size() > 0) {
+                g_ai_data.cat_flag = true;
+                draw_detection_result((uint16_t *)frame, (int)frame->height, (int)frame->width, detect_candidates);
+                std::list<dl::detect::result_t>::iterator first_result = detect_candidates.begin();
+                if (first_result != detect_candidates.end()) {
+                    g_ai_data.cat_detect.cat_frame_length = (int)first_result->box[2] - (int)first_result->box[0];
+                    g_ai_data.cat_detect.cat_frame_width = (int)first_result->box[3] - (int)first_result->box[1];
+                }
+            } else {
+                g_ai_data.cat_flag = false;
+            }
+            ai_push_result(&g_ai_data);
+
+            //还需要一个上报数据函数
+            esp_camera_fb_return(frame);
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
+
+}
+
+extern "C" __attribute__((weak)) void code_scanner_task(void* arg) {
+    // 初始化AI数据
+    init_ai_data(&g_ai_data);
+
+    camera_fb_t *frame = NULL;
+    while (1) {
+        if(xQueueReceive(camera_queue, &frame, portMAX_DELAY) == pdPASS) {
+            if (frame && frame->buf) {
+            }
+
+            esp_image_scanner_t *esp_scn = esp_code_scanner_create();
+            esp_code_scanner_config_t config = {ESP_CODE_SCANNER_MODE_FAST, ESP_CODE_SCANNER_IMAGE_RGB565, frame->width, frame->height};
+            esp_code_scanner_set_config(esp_scn, config);
+            int decoded_num = esp_code_scanner_scan_image(esp_scn, (uint8_t *)frame->buf);
+            if(decoded_num){
+                esp_code_scanner_symbol_t result = esp_code_scanner_result(esp_scn);
+                g_ai_data.code_data = result.data;
+                g_ai_data.code_flag = true;
+            }else{
+                g_ai_data.code_data = NULL;
+                g_ai_data.code_flag = false;
+            }
+
+            esp_code_scanner_destroy(esp_scn);
+
+            ai_push_result(&g_ai_data);
+            esp_camera_fb_return(frame);
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+}
+
+
+extern "C" __attribute__((weak)) void move_detect_task(void* arg) {
+    // 初始化AI数据
+    init_ai_data(&g_ai_data);
+
+    camera_fb_t *frame = NULL;
+    camera_fb_t *frame_last = NULL;
+    
+    while (1) {
+        if(xQueueReceive(camera_queue, &frame, portMAX_DELAY) == pdPASS) {
+            if (frame && frame->buf) {
+            }
+            if (xQueueReceive(camera_queue, &frame_last, portMAX_DELAY)){
+                uint32_t moving_point_number = dl::image::get_moving_point_number((uint16_t *)frame->buf, (uint16_t *)frame_last->buf, frame->height, frame->width, 8, 15);
+                if (moving_point_number > 10) {
+                    g_ai_data.move_flag = true;
+                } else {
+                    g_ai_data.move_flag = false;
+                }
+            }
+            esp_camera_fb_return(frame);
+            esp_camera_fb_return(frame_last);
+            ai_push_result(&g_ai_data);
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
 }

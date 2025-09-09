@@ -186,7 +186,6 @@ void es7243e_init(void)
         .scl_io_num = I2C_MASTER_SCL_IO,
         .sda_pullup_en = GPIO_PULLUP_ENABLE,
         .scl_pullup_en = GPIO_PULLUP_ENABLE,
-        //.master.clk_speed = I2C_MASTER_FREQ_HZ,
     };
     conf.master.clk_speed = I2C_MASTER_FREQ_HZ;
    // 安装驱动
