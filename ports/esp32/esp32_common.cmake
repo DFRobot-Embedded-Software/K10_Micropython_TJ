@@ -342,3 +342,12 @@ add_custom_command(
 
 #set(cat_det ${IDF_PATH}/components/esp-dl/models/cat_detect/models/s3/espdet_pico_224_224_cat.espdl)
 #esptool_py_flash_to_partition(flash "cat_det" "${cat_det}")
+
+# 添加TTS语音数据文件到烧录参数中
+set(tts_voice_data ${CMAKE_CURRENT_LIST_DIR}/tts_data/esp_tts_voice_data_xiaoxin.dat)
+if(EXISTS ${tts_voice_data})
+    esptool_py_flash_to_partition(flash "voice_data" "${tts_voice_data}")
+    message(STATUS "TTS voice data will be flashed to voice_data partition: ${tts_voice_data}")
+else()
+    message(WARNING "TTS voice data file not found: ${tts_voice_data}")
+endif()
