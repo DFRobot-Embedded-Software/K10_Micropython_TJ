@@ -68,13 +68,13 @@ extern "C" __attribute__((weak)) void ai_camera_task(void* arg) {
     }
     
     while (1) {
-        xl9555_write_ai(0x03, 0x80);
+        //xl9555_write_ai(0x03, 0x80);
         camera_fb_t *frame = esp_camera_fb_get();
         if (frame){
             xQueueSend(ai_camera_queue, &frame, portMAX_DELAY);
         }
-        vTaskDelay(pdMS_TO_TICKS(50));
-        xl9555_write_ai(0x03, 0x00);
+        //vTaskDelay(pdMS_TO_TICKS(50));
+        //xl9555_write_ai(0x03, 0x00);
         vTaskDelay(pdMS_TO_TICKS(50));
     }
 }
@@ -108,6 +108,7 @@ extern "C" __attribute__((weak))  void ai_task(void* arg) {
                 std::list<dl::detect::result_t> &detect_results = detectorFace2.infer((uint16_t *)frame->buf, {(int)frame->height, (int)frame->width, 3}, detect_candidates);
                 
                 if (detect_results.size() > 0) {
+                    xl9555_write_ai(0x03, 0x80);
                     //mp_print_face_cstr("face detected\n");
                     g_ai_data.face_flag = true;
                     std::list<dl::detect::result_t>::iterator first_result = detect_results.begin();
@@ -130,6 +131,7 @@ extern "C" __attribute__((weak))  void ai_task(void* arg) {
                     
                     
                 } else {
+                    xl9555_write_ai(0x03, 0x00);
                     //mp_print_face_cstr("no face detected\n");
                     g_ai_data.face_flag = false;
                     g_ai_data.face_detect.face_id = -1;

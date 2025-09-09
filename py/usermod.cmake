@@ -51,6 +51,8 @@ if (USER_C_MODULES)
             get_filename_component(USER_C_MODULES_ABS "${USER_C_MODULE_PATH}" ABSOLUTE)
             message(FATAL_ERROR "USER_C_MODULES doesn't exist: ${USER_C_MODULES_ABS}")
         endif()
+        #确保cmake依赖刷新
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${USER_C_MODULE_PATH})
 
         message("Including User C Module(s) from ${USER_C_MODULE_PATH}")
         include(${USER_C_MODULE_PATH})

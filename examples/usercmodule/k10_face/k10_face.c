@@ -68,7 +68,7 @@ static mp_obj_t ai_start_task(void) {
     if (!ai_result_queue) {
         ai_result_queue = xQueueCreate(10, sizeof(ai_data_obj_t)); // 最多缓存10个结果
     }
-    xTaskCreatePinnedToCore(ai_task, "ai_task", 1024*8, NULL, 5, NULL, 0);
+    xTaskCreatePinnedToCore(ai_task, "ai_task", 1024*8, NULL, 3, NULL, 0);
     xTaskCreatePinnedToCore(ai_callback_task, "ai_cb_task", 4096, NULL, 5, NULL, 1);
     return mp_const_none;
 }
@@ -110,7 +110,7 @@ static mp_obj_t camera_start_task(void) {
         snprintf(error_msg, sizeof(error_msg), "Camera init failed with error 0x%x\n", err);
         mp_print_face_cstr(error_msg);
     }
-    xTaskCreatePinnedToCore(ai_camera_task, "ai_camera_task", 4096, NULL, 5, NULL, 0);
+    xTaskCreatePinnedToCore(ai_camera_task, "ai_camera_task", 4096, NULL, 4, NULL, 0);
     return mp_const_none;
 }
 

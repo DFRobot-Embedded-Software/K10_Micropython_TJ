@@ -47,6 +47,7 @@ USER_C_MODULES = ../../../examples/usercmodule/micropython.cmake
 
 CMAKE_ARGS =
 
+
 ifdef USER_C_MODULES
 	CMAKE_ARGS += -DUSER_C_MODULES=${USER_C_MODULES}
 endif
