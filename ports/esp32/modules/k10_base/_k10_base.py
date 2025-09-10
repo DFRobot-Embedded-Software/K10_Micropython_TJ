@@ -938,10 +938,11 @@ class Screen(object):
     def init(self,dir=2):
         #用来打开屏幕背光
         myi2c = I2C(0, scl=Pin(48), sda=Pin(47), freq=100000)
+
         temp = myi2c.readfrom_mem(0x20, 0x02, 1)
         myi2c.writeto(0x20,bytearray([0x02, (temp[0] | 0x01)]))
         temp = myi2c.readfrom_mem(0x20, 0x06, 1)
-        myi2c.writeto(0x20,bytearray([0x06, (temp[0] & 0xFE)]))
+        myi2c.writeto(0x20,bytearray([0x06, (temp[0] & 0XFC)]))
         self.display_bus.apply_rotation(dir)
 
         #self.screen = lv.obj()
@@ -963,11 +964,14 @@ class Screen(object):
         self.area = lv.area_t()
         self.clear_rect = lv.draw_rect_dsc_t()
         
+        # 创建初始的黑色图像数据
+        initial_buf = bytearray(240*320*2)  # 全零，即黑色
+        
         self.img_dsc = lv.image_dsc_t(
             dict(
                 header = dict(cf =lv.COLOR_FORMAT.RGB565, w=240, h=320),
                 data_size = 240*320*2,
-                data = None
+                data = bytes(initial_buf)
             )
         )
         #显示摄像头画面的timer
@@ -1123,9 +1127,27 @@ class Screen(object):
         lv.screen_load(self.screen)
 
     def show_camera_img(self,buf):
-        lv.draw_sw_rgb565_swap(buf,240*320*2)
-        self.img_dsc.data = buf
-        self.img.set_src(self.img_dsc)
+        if buf is None or len(buf) != 240*320*2:
+            #print(f"错误：图像数据无效，长度: {len(buf) if buf else 0}, 期望: {240*320*2}")
+            return
+        
+        # 确保 buf 是 bytearray 类型以便修改
+        if isinstance(buf, bytes):
+            buf = bytearray(buf)
+        
+        # 交换RGB565字节序
+        lv.draw_sw_rgb565_swap(buf, 240*320*2)
+        
+        # 创建新的 image_dsc 而不是修改现有的
+        img_dsc = lv.image_dsc_t(
+            dict(
+                header = dict(cf = lv.COLOR_FORMAT.RGB565, w=240, h=320),
+                data_size = 240*320*2,
+                data = bytes(buf)  # 转换为不可变的 bytes
+            )
+        )
+        
+        self.img.set_src(img_dsc)
         lv.refr_now(None)
 
     def show_camera(self,camera):
