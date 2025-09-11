@@ -40,13 +40,17 @@ extern "C" {
 
 
 
-static QueueHandle_t camera_queue = NULL;
+QueueHandle_t camera_queue = NULL;
 static face_info_t recognize_result;
 
 extern "C" int register_face_flag;
 extern "C" int recognize_face_flag;
 extern "C" int remove_face_flag;
 extern "C" int reset_faces_flag;
+extern "C" int free_camera_flag;
+extern "C" int free_ai_flag;
+//extern "C" QueueHandle_t camera_queue;
+
 
 extern "C" void ai_push_result(ai_data_obj_t *data);
 extern "C" void camera_push_result(camera_fb_t *data);
@@ -121,12 +125,18 @@ extern "C" __attribute__((weak)) void camera_start_task(void* arg) {
     }
     
     while (1) {
+        if (free_camera_flag == 1) {
+            vTaskDelay(pdMS_TO_TICKS(100)); // 等待100ms后重试
+            break;
+        }
         camera_fb_t *frame = esp_camera_fb_get();
         if (frame){
             xQueueSend(camera_queue, &frame, portMAX_DELAY);
         }
         vTaskDelay(pdMS_TO_TICKS(1));
     }
+    esp_err_t err = esp_camera_deinit();
+    vTaskDelete(NULL);
 }
 
 
@@ -144,6 +154,16 @@ extern "C" __attribute__((weak))  void face_recognize_start_task(void* arg) {
     camera_fb_t *frame = NULL;
 
     while (1) {
+        if (free_ai_flag == 1) {
+            vTaskDelay(pdMS_TO_TICKS(100)); // 等待100ms后重试
+            break;
+        }
+        // 检查camera_queue是否已初始化
+        if (!camera_queue) {
+            vTaskDelay(pdMS_TO_TICKS(100)); // 等待100ms后重试
+            continue;
+        }
+        
         if(xQueueReceive(camera_queue, &frame, portMAX_DELAY) == pdPASS) {
             // 检查帧是否有效
             if (!frame || !frame->buf) {
@@ -165,58 +185,58 @@ extern "C" __attribute__((weak))  void face_recognize_start_task(void* arg) {
                 std::list<dl::detect::result_t> &detect_results = detectorFace2.infer((uint16_t *)frame->buf, {(int)frame->height, (int)frame->width, 3}, detect_candidates);
                 
                 if (detect_results.size() > 0) {
-                    g_ai_data.face_flag = true;
-                    std::list<dl::detect::result_t>::iterator first_result = detect_results.begin();
-                    if (first_result != detect_results.end()) {
-                        g_ai_data.face_detect.face_frame_length = (int)first_result->box[2] - (int)first_result->box[0];
-                        g_ai_data.face_detect.face_frame_width = (int)first_result->box[3] - (int)first_result->box[1];
-                        
-                        // 安全地访问 keypoint 数组
-                        if (!first_result->keypoint.empty() && first_result->keypoint.size() >= 10) {
-                            g_ai_data.face_detect.face_left_eys[0] = (int)first_result->keypoint[0];
-                            g_ai_data.face_detect.face_left_eys[1] = (int)first_result->keypoint[1];
-                            g_ai_data.face_detect.face_right_eys[0] = (int)first_result->keypoint[6];
-                            g_ai_data.face_detect.face_right_eys[1] = (int)first_result->keypoint[7];
-                            g_ai_data.face_detect.face_nose[0] = (int)first_result->keypoint[4];
-                            g_ai_data.face_detect.face_nose[1] = (int)first_result->keypoint[5];
-                            g_ai_data.face_detect.face_left_mouth[0] = (int)first_result->keypoint[2];
-                            g_ai_data.face_detect.face_left_mouth[1] = (int)first_result->keypoint[3];
-                            g_ai_data.face_detect.face_right_mouth[0] = (int)first_result->keypoint[8];
-                            g_ai_data.face_detect.face_right_mouth[1] = (int)first_result->keypoint[9];
-                        } else {
-                            // 如果关键点数据无效，设置为默认值
-                            memset(g_ai_data.face_detect.face_left_eys, 0, sizeof(g_ai_data.face_detect.face_left_eys));
-                            memset(g_ai_data.face_detect.face_right_eys, 0, sizeof(g_ai_data.face_detect.face_right_eys));
-                            memset(g_ai_data.face_detect.face_nose, 0, sizeof(g_ai_data.face_detect.face_nose));
-                            memset(g_ai_data.face_detect.face_left_mouth, 0, sizeof(g_ai_data.face_detect.face_left_mouth));
-                            memset(g_ai_data.face_detect.face_right_mouth, 0, sizeof(g_ai_data.face_detect.face_right_mouth));
-                        }
-                    }
+                g_ai_data.face_flag = true;
+                std::list<dl::detect::result_t>::iterator first_result = detect_results.begin();
+                if (first_result != detect_results.end()) {
+                    g_ai_data.face_detect.face_frame_length = (int)first_result->box[2] - (int)first_result->box[0];
+                    g_ai_data.face_detect.face_frame_width = (int)first_result->box[3] - (int)first_result->box[1];
                     
-                    // 人脸注册
-                    if(register_face_flag == 1){
-                        if (!detect_results.empty() && !detect_results.front().keypoint.empty()) {
-                            recognizer->enroll_id((uint16_t *)frame->buf, {(int)frame->height, (int)frame->width, 3}, detect_results.front().keypoint, "", true);
-                        }
-                        register_face_flag = 0;
+                    // 安全地访问 keypoint 数组
+                    if (!first_result->keypoint.empty() && first_result->keypoint.size() >= 10) {
+                        g_ai_data.face_detect.face_left_eys[0] = (int)first_result->keypoint[0];
+                        g_ai_data.face_detect.face_left_eys[1] = (int)first_result->keypoint[1];
+                        g_ai_data.face_detect.face_right_eys[0] = (int)first_result->keypoint[6];
+                        g_ai_data.face_detect.face_right_eys[1] = (int)first_result->keypoint[7];
+                        g_ai_data.face_detect.face_nose[0] = (int)first_result->keypoint[4];
+                        g_ai_data.face_detect.face_nose[1] = (int)first_result->keypoint[5];
+                        g_ai_data.face_detect.face_left_mouth[0] = (int)first_result->keypoint[2];
+                        g_ai_data.face_detect.face_left_mouth[1] = (int)first_result->keypoint[3];
+                        g_ai_data.face_detect.face_right_mouth[0] = (int)first_result->keypoint[8];
+                        g_ai_data.face_detect.face_right_mouth[1] = (int)first_result->keypoint[9];
+                    } else {
+                        // 如果关键点数据无效，设置为默认值
+                        memset(g_ai_data.face_detect.face_left_eys, 0, sizeof(g_ai_data.face_detect.face_left_eys));
+                        memset(g_ai_data.face_detect.face_right_eys, 0, sizeof(g_ai_data.face_detect.face_right_eys));
+                        memset(g_ai_data.face_detect.face_nose, 0, sizeof(g_ai_data.face_detect.face_nose));
+                        memset(g_ai_data.face_detect.face_left_mouth, 0, sizeof(g_ai_data.face_detect.face_left_mouth));
+                        memset(g_ai_data.face_detect.face_right_mouth, 0, sizeof(g_ai_data.face_detect.face_right_mouth));
                     }
-
-                    // 人脸识别
-                    if(recognize_face_flag == 1){
-                        if (!detect_results.empty() && !detect_results.front().keypoint.empty()) {
-                            recognize_result = recognizer->recognize((uint16_t *)frame->buf, {(int)frame->height, (int)frame->width, 3}, detect_results.front().keypoint);
-                            g_ai_data.face_detect.face_id = recognize_result.id;
-                        }
-                        recognize_face_flag = 0;
-                    }
-                    
-                    // 画检测框
-                    draw_detection_result((uint16_t *)frame->buf, (int)frame->height, (int)frame->width, detect_results);
-                } else {
-                    g_ai_data.face_flag = false;
-                    g_ai_data.face_detect.face_id = -1;
                 }
                 
+                // 人脸注册
+                if(register_face_flag == 1){
+                    if (!detect_results.empty() && !detect_results.front().keypoint.empty()) {
+                        recognizer->enroll_id((uint16_t *)frame->buf, {(int)frame->height, (int)frame->width, 3}, detect_results.front().keypoint, "", true);
+                    }
+                    register_face_flag = 0;
+                }
+
+                // 人脸识别
+                if(recognize_face_flag == 1){
+                    if (!detect_results.empty() && !detect_results.front().keypoint.empty()) {
+                        recognize_result = recognizer->recognize((uint16_t *)frame->buf, {(int)frame->height, (int)frame->width, 3}, detect_results.front().keypoint);
+                        g_ai_data.face_detect.face_id = recognize_result.id;
+                    }
+                    recognize_face_flag = 0;
+                }
+                
+                // 画检测框
+                draw_detection_result((uint16_t *)frame->buf, (int)frame->height, (int)frame->width, detect_results);
+            } else {
+                g_ai_data.face_flag = false;
+                g_ai_data.face_detect.face_id = -1;
+            }
+            
                 // 推送结果到队列
                 ai_push_result(&g_ai_data);
                 camera_push_result(frame);
@@ -233,6 +253,8 @@ extern "C" __attribute__((weak))  void face_recognize_start_task(void* arg) {
         }
         vTaskDelay(pdMS_TO_TICKS(1)); // 增加延时，避免过度占用CPU
     }
+    free_camera_flag = 1;
+    vTaskDelete(NULL);
 }
 
 
@@ -287,6 +309,16 @@ extern "C" __attribute__((weak)) void cat_detect_task(void* arg) {
 
     camera_fb_t *frame = NULL;
     while (1) {
+        if (free_ai_flag == 1) {
+            vTaskDelay(pdMS_TO_TICKS(100)); // 等待100ms后重试
+            break;
+        }
+        // 检查camera_queue是否已初始化
+        if (!camera_queue) {
+            vTaskDelay(pdMS_TO_TICKS(100)); // 等待100ms后重试
+            continue;
+        }
+        
         if(xQueueReceive(camera_queue, &frame, portMAX_DELAY) == pdPASS) {
             // 检查帧是否有效
             if (!frame || !frame->buf) {
@@ -304,17 +336,17 @@ extern "C" __attribute__((weak)) void cat_detect_task(void* arg) {
             
             try {
                 std::list<dl::detect::result_t> &detect_candidates = detectorCat.infer((uint16_t *)frame->buf, {(int)frame->height, (int)frame->width, 3});
-                if (detect_candidates.size() > 0) {
-                    g_ai_data.cat_flag = true;
-                    draw_detection_result((uint16_t *)frame->buf, (int)frame->height, (int)frame->width, detect_candidates);
-                    std::list<dl::detect::result_t>::iterator first_result = detect_candidates.begin();
-                    if (first_result != detect_candidates.end()) {
-                        g_ai_data.cat_detect.cat_frame_length = (int)first_result->box[2] - (int)first_result->box[0];
-                        g_ai_data.cat_detect.cat_frame_width = (int)first_result->box[3] - (int)first_result->box[1];
-                    }
-                } else {
-                    g_ai_data.cat_flag = false;
+            if (detect_candidates.size() > 0) {
+                g_ai_data.cat_flag = true;
+                draw_detection_result((uint16_t *)frame->buf, (int)frame->height, (int)frame->width, detect_candidates);
+                std::list<dl::detect::result_t>::iterator first_result = detect_candidates.begin();
+                if (first_result != detect_candidates.end()) {
+                    g_ai_data.cat_detect.cat_frame_length = (int)first_result->box[2] - (int)first_result->box[0];
+                    g_ai_data.cat_detect.cat_frame_width = (int)first_result->box[3] - (int)first_result->box[1];
                 }
+            } else {
+                g_ai_data.cat_flag = false;
+            }
                 ai_push_result(&g_ai_data);
                 camera_push_result(frame);
                 
@@ -332,6 +364,8 @@ extern "C" __attribute__((weak)) void cat_detect_task(void* arg) {
         // vTaskDelay(pdMS_TO_TICKS(100));
         // xl9555_write_ai(0x03, 0x80);
     }
+    free_camera_flag = 1;
+    vTaskDelete(NULL);
 }
 
 extern "C" __attribute__((weak)) void code_scanner_task(void* arg) {
@@ -340,6 +374,16 @@ extern "C" __attribute__((weak)) void code_scanner_task(void* arg) {
 
     camera_fb_t *frame = NULL;
     while (1) {
+        if (free_ai_flag == 1) {
+            vTaskDelay(pdMS_TO_TICKS(100)); // 等待100ms后重试
+            break;
+        }
+        // 检查camera_queue是否已初始化
+        if (!camera_queue) {
+            vTaskDelay(pdMS_TO_TICKS(100)); // 等待100ms后重试
+            continue;
+        }
+        
         if(xQueueReceive(camera_queue, &frame, portMAX_DELAY) == pdPASS) {
             // 检查帧是否有效
             if (!frame || !frame->buf) {
@@ -388,8 +432,10 @@ extern "C" __attribute__((weak)) void code_scanner_task(void* arg) {
             }
         }
         
-        vTaskDelay(pdMS_TO_TICKS(1));
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
+    free_camera_flag = 1;
+    vTaskDelete(NULL);
 }
 
 
@@ -401,6 +447,16 @@ extern "C" __attribute__((weak)) void move_detect_task(void* arg) {
     camera_fb_t *frame_last = NULL;
     
     while (1) {
+        if (free_ai_flag == 1) {
+            vTaskDelay(pdMS_TO_TICKS(100)); // 等待100ms后重试
+            break;
+        }
+        // 检查camera_queue是否已初始化
+        if (!camera_queue) {
+            vTaskDelay(pdMS_TO_TICKS(100)); // 等待100ms后重试
+            continue;
+        }
+        
         if(xQueueReceive(camera_queue, &frame, portMAX_DELAY) == pdPASS) {
             // 检查第一帧是否有效
             if (!frame || !frame->buf) {
@@ -463,5 +519,7 @@ extern "C" __attribute__((weak)) void move_detect_task(void* arg) {
         }
         vTaskDelay(pdMS_TO_TICKS(1));
     }
+    free_camera_flag = 1;
+    vTaskDelete(NULL);
 }
 
