@@ -27,6 +27,7 @@ extern void init_ai(void);
 extern void cat_detect_task(void* arg);
 extern void code_scanner_task(void* arg);
 extern void move_detect_task(void* arg);
+extern QueueHandle_t camera_queue;
 
 static mp_obj_t g_ai_callback = mp_const_none;
 static QueueHandle_t result_queue = NULL;
@@ -39,6 +40,9 @@ static TaskHandle_t move_detect_task_handle = NULL;
 static QueueHandle_t camera_output_queue = NULL;
 static ai_data_obj_t g_latest_ai_data;
 static bool g_ai_data_updated = false;
+static int init_ai_flag = 0;
+int free_camera_flag = 0;
+int free_ai_flag = 0;
 
 // 设置回调
 static mp_obj_t mp_set_ai_callback(mp_obj_t callback) {
@@ -69,6 +73,9 @@ void camera_push_result(camera_fb_t *data) {
 static void ai_callback_task(void* arg) {
     ai_data_obj_t data;
     while (1) {
+        if (free_ai_flag == 1) {
+            break;
+        }
         if (xQueueReceive(result_queue, &data, portMAX_DELAY)) {
             // 更新全局数据
             g_latest_ai_data = data;
@@ -80,14 +87,10 @@ static void ai_callback_task(void* arg) {
             }
         }
     }
+    vTaskDelete(NULL);
 }
 
-// 启动任务
-static mp_obj_t mp_face_recognize_start(void) {
-    xTaskCreatePinnedToCore(face_recognize_start_task, "face_recognize_start_task", 1024*8, NULL, 4, &face_recognize_task_handle, 0);
-    return mp_const_none;
-}
-static MP_DEFINE_CONST_FUN_OBJ_0(mp_face_recognize_start_obj, mp_face_recognize_start);
+
 
 
 static mp_obj_t mp_camera_start(void) {
@@ -125,12 +128,19 @@ static mp_obj_t mp_camera_start(void) {
         snprintf(error_msg, sizeof(error_msg), "Camera init failed with error 0x%x\n", err);
         mp_print_face_cstr(error_msg);
     }
-    xTaskCreatePinnedToCore(camera_start_task, "camera_start_task", 4096, NULL, 5, &camera_start_task_handle, 0);
+    xTaskCreatePinnedToCore(camera_start_task, "camera_start_task", 4096, NULL, 4, &camera_start_task_handle, 0);
     return mp_const_none;
 }
 
 static MP_DEFINE_CONST_FUN_OBJ_0(mp_camera_start_obj, mp_camera_start);
 
+// 启动任务
+static mp_obj_t mp_face_recognize_start(void) {
+    init_ai_flag = 1;
+    xTaskCreatePinnedToCore(face_recognize_start_task, "face_recognize_start_task", 1024*8, NULL, 4, &face_recognize_task_handle, 0);
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(mp_face_recognize_start_obj, mp_face_recognize_start);
 
 static mp_obj_t mp_register_face(void) {
     register_face_flag = 1;
@@ -159,13 +169,16 @@ static mp_obj_t mp_reset_faces(void) {
 static MP_DEFINE_CONST_FUN_OBJ_0(mp_reset_faces_obj, mp_reset_faces);
 
 static mp_obj_t mp_init_ai(void) {
+    init_ai_flag = 0;
+    free_ai_flag = 0;
+    free_camera_flag = 0;
     if (!result_queue) {
         result_queue = xQueueCreate(10, sizeof(ai_data_obj_t)); // 最多缓存10个结果
     }
     // 创建AI回调任务
-    if (!ai_callback_task_handle) {
+    //if (!ai_callback_task_handle) {
         xTaskCreatePinnedToCore(ai_callback_task, "ai_cb_task", 1024*4, NULL, 5, &ai_callback_task_handle, 1);
-    }
+    //}
     if (!camera_output_queue) {
         camera_output_queue = xQueueCreate(5, sizeof(camera_fb_t *)); // 最多缓存5个帧指针
     }
@@ -176,18 +189,21 @@ static mp_obj_t mp_init_ai(void) {
 static MP_DEFINE_CONST_FUN_OBJ_0(mp_init_ai_obj, mp_init_ai);
 
 static mp_obj_t mp_cat_detect(void) {
+    init_ai_flag = 1;
     xTaskCreatePinnedToCore(cat_detect_task, "cat_detect_task", 1024*8, NULL, 4, &cat_detect_task_handle, 0);
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(mp_cat_detect_obj, mp_cat_detect);
 
 static mp_obj_t mp_code_scanner(void) {
-    xTaskCreatePinnedToCore(code_scanner_task, "code_scanner_task", 1024*8, NULL, 4, &code_scanner_task_handle, 0);
+    init_ai_flag = 1;
+    xTaskCreatePinnedToCore(code_scanner_task, "code_scanner_task", 1024*8, NULL, 3, &code_scanner_task_handle, 0);
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(mp_code_scanner_obj, mp_code_scanner);
 
 static mp_obj_t mp_move_detect(void) {
+    init_ai_flag = 1;
     xTaskCreatePinnedToCore(move_detect_task, "move_detect_task", 1024*8, NULL, 4, &move_detect_task_handle, 0);
     return mp_const_none;
 }
@@ -195,11 +211,27 @@ static MP_DEFINE_CONST_FUN_OBJ_0(mp_move_detect_obj, mp_move_detect);
 
 static mp_obj_t mp_camera_capture(void) {
     camera_fb_t *frame = NULL;
-    if (xQueueReceive(camera_output_queue, &frame, 0)) { // 非阻塞接收
-        if (frame) {
-            mp_obj_t image = mp_obj_new_bytes(frame->buf, frame->len);
-            esp_camera_fb_return(frame); // 释放帧缓冲区
-            return image;
+    if (init_ai_flag == 0) {
+        if (xQueueReceive(camera_queue, &frame, 0)) { // 非阻塞接收
+            if (frame) {
+                mp_obj_t image = mp_obj_new_bytes(frame->buf, frame->len);
+                esp_camera_fb_return(frame); // 释放帧缓冲区
+                if (image != mp_const_none) {
+                    return image;
+                }
+                // 如果创建bytes对象失败，返回None
+            }
+        }
+    }else{
+        if (xQueueReceive(camera_output_queue, &frame, 0)) { // 非阻塞接收
+            if (frame) {
+                mp_obj_t image = mp_obj_new_bytes(frame->buf, frame->len);
+                esp_camera_fb_return(frame); // 释放帧缓冲区
+                if (image != mp_const_none) {
+                    return image;
+                }
+                // 如果创建bytes对象失败，返回None
+            }
         }
     }
     return mp_const_none;
@@ -264,42 +296,7 @@ static MP_DEFINE_CONST_FUN_OBJ_0(mp_is_ai_data_updated_obj, mp_is_ai_data_update
 
 // 释放AI系统和资源
 static mp_obj_t mp_deinit_ai(void) {
-    // 删除所有AI相关任务
-    if (ai_callback_task_handle != NULL) {
-        vTaskDelete(ai_callback_task_handle);
-        ai_callback_task_handle = NULL;
-    }
-    
-    if (face_recognize_task_handle != NULL) {
-        vTaskDelete(face_recognize_task_handle);
-        face_recognize_task_handle = NULL;
-    }
-    
-    if (camera_start_task_handle != NULL) {
-        vTaskDelete(camera_start_task_handle);
-        camera_start_task_handle = NULL;
-    }
-    
-    if (cat_detect_task_handle != NULL) {
-        vTaskDelete(cat_detect_task_handle);
-        cat_detect_task_handle = NULL;
-    }
-    
-    if (code_scanner_task_handle != NULL) {
-        vTaskDelete(code_scanner_task_handle);
-        code_scanner_task_handle = NULL;
-    }
-    
-    if (move_detect_task_handle != NULL) {
-        vTaskDelete(move_detect_task_handle);
-        move_detect_task_handle = NULL;
-    }
-    
-    // 删除结果队列
-    if (result_queue != NULL) {
-        vQueueDelete(result_queue);
-        result_queue = NULL;
-    }
+    free_ai_flag = 1;
     
     // 删除摄像头输出队列
     if (camera_output_queue != NULL) {
@@ -322,6 +319,8 @@ static mp_obj_t mp_deinit_ai(void) {
     
     // 清零AI数据
     memset(&g_latest_ai_data, 0, sizeof(g_latest_ai_data));
+    
+    
     
     return mp_const_none;
 }

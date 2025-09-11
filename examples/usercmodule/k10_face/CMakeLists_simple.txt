@@ -1,0 +1,52 @@
+# 简化版本的CMakeLists.txt
+cmake_minimum_required(VERSION 3.16)
+
+# 设置项目名称
+project(k10_face_simple)
+
+# 设置C++标准
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# 包含目录
+include_directories(
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${IDF_PATH}/components/esp32-camera
+    ${IDF_PATH}/components/freertos
+    ${IDF_PATH}/components/esp_common
+    ${IDF_PATH}/components/log
+    ${IDF_PATH}/components/esp_system
+)
+
+# 源文件
+set(SOURCES
+    k10_face_simple.cpp
+    k10_face_simple.c
+    ai_data.h
+)
+
+# 创建库
+add_library(k10_face_simple STATIC ${SOURCES})
+
+# 链接库
+target_link_libraries(k10_face_simple
+    esp32-camera
+    freertos
+    esp_common
+    log
+    esp_system
+)
+
+# 编译选项
+target_compile_options(k10_face_simple PRIVATE
+    -Wall
+    -Wextra
+    -Werror
+    -O2
+)
+
+# 定义宏
+target_compile_definitions(k10_face_simple PRIVATE
+    CONFIG_FREERTOS_HZ=1000
+    CONFIG_ESP32_DEFAULT_CPU_FREQ_MHZ=240
+)
