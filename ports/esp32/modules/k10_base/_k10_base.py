@@ -1005,7 +1005,7 @@ class Screen(object):
         self.desc.color = lv.color_hex(color)
         self.desc.text = text
         if font_size == 16:
-            self.desc.font = lv.font_montserrat_16
+            self.desc.font = lv.font_k10_16
         elif font_size == 14:
             self.desc.font = lv.font_montserrat_14
         elif font_size == 12:
@@ -1024,14 +1024,9 @@ class Screen(object):
         self.area.set_width(240-self.area.x1)
         self.area.set_height(font_size + 2)
 
-        #self.layer.draw_buf.clear(self.area)
-        #self.canvas.fill_bg(lv.color_white(), lv.OPA.TRANSP)
-        #self.canvas.get_draw_buf().clear(self.area)  # 强制清除画布缓冲区
-        #bytearray(self.canvas.get_buf())[:] = b'\x00' * len(self.canvas_buf)
+
         self.layer.draw_buf.clear(self.area)  # 清除图层缓冲区
-        #self.canvas_buf[:] = b'\x00' * len(self.canvas_buf)
         lv.draw_label(self.layer, self.desc, self.area)
-        #self.layer.draw_buf.clear(self.area)
 
     #画点
     def draw_point(self,x=0,y=0,color=0x0000FF):
