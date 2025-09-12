@@ -5,6 +5,7 @@
 
 #include <string.h>
 #include <stdint.h>
+#include "py/runtime.h"
 
 /*-----------------
  *  FONT CHIP CONFIG
@@ -28,16 +29,18 @@ int GT_Font_Init(void) {
 unsigned char ASCII_GetData(unsigned char asc, unsigned long ascii_kind, unsigned char *DZ_Data) {
     // Check if this is the format we support
     if (ascii_kind != ASCII_8X16) {
+        mp_printf(&mp_plat_print, "Unsupported format: %d\n", ascii_kind);
         return 0;  // Unsupported format
     }
     
     // Check character range (printable ASCII)
     if (asc < 32 || asc > 126) {
+        mp_printf(&mp_plat_print, "Unsupported format: %d\n", ascii_kind);
         return 0;  // Unsupported character
     }
 
     // TODO: 在这里实现真正的SPI通信来读取字库芯片数据
-    // 现在返回简单的测试数据（全白方块）
+    // 现在返回简单的测试数据（明显的"A"字形状）
     memset(DZ_Data, 0x00, 16);  // 8x16 pixels = 16 bytes (1bpp)
     DZ_Data[0] = 0x18;
     DZ_Data[1] = 0x24;
