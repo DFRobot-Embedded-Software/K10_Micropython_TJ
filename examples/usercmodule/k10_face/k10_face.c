@@ -137,7 +137,7 @@ static MP_DEFINE_CONST_FUN_OBJ_0(mp_camera_start_obj, mp_camera_start);
 // 启动任务
 static mp_obj_t mp_face_recognize_start(void) {
     init_ai_flag = 1;
-    xTaskCreatePinnedToCore(face_recognize_start_task, "face_recognize_start_task", 1024*8, NULL, 4, &face_recognize_task_handle, 0);
+    xTaskCreatePinnedToCore(face_recognize_start_task, "face_recognize_start_task", 1024*8, NULL, 1, &face_recognize_task_handle, 0);
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(mp_face_recognize_start_obj, mp_face_recognize_start);
@@ -190,14 +190,14 @@ static MP_DEFINE_CONST_FUN_OBJ_0(mp_init_ai_obj, mp_init_ai);
 
 static mp_obj_t mp_cat_detect(void) {
     init_ai_flag = 1;
-    xTaskCreatePinnedToCore(cat_detect_task, "cat_detect_task", 1024*8, NULL, 4, &cat_detect_task_handle, 0);
+    xTaskCreatePinnedToCore(cat_detect_task, "cat_detect_task", 1024*8, NULL, 1, &cat_detect_task_handle, 0);
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(mp_cat_detect_obj, mp_cat_detect);
 
 static mp_obj_t mp_code_scanner(void) {
     init_ai_flag = 1;
-    xTaskCreatePinnedToCore(code_scanner_task, "code_scanner_task", 1024*8, NULL, 3, &code_scanner_task_handle, 0);
+    xTaskCreatePinnedToCore(code_scanner_task, "code_scanner_task", 1024*8, NULL, 4, &code_scanner_task_handle, 0);
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(mp_code_scanner_obj, mp_code_scanner);

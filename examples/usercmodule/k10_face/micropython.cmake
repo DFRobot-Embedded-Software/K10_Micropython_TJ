@@ -46,5 +46,3 @@ target_compile_definitions(usermod_K10_face INTERFACE
 target_link_libraries(usermod INTERFACE usermod_K10_face)
 
 
-
-
