@@ -556,7 +556,7 @@ class dht(object):
 light = Light()
 mic = Mic()
 speaker = Speaker()
-tf_card = TF_card()
+#tf_card = TF_card()
 screen = Screen()
 camera = Camera()
 wifi = WiFi()
@@ -569,7 +569,7 @@ rgb = rgb_board()
 def unihiker_k10_collect():
     global tf_card,speaker
     speaker.deinit()
-    tf_card.deinit()
+    #tf_card.deinit()
     del mic,speaker,tf_card
     gc.collect()
     print("unihiker_k10_collect")
