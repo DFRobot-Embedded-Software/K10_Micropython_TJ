@@ -210,6 +210,19 @@ const void * lv_font_get_bitmap_fmt_txt(lv_font_glyph_dsc_t * g_dsc, lv_draw_buf
 bool lv_font_get_glyph_dsc_fmt_txt(const lv_font_t * font, lv_font_glyph_dsc_t * dsc_out, uint32_t unicode_letter,
                                    uint32_t unicode_letter_next);
 
+/**
+ * Generic bitmap conversion functions for external use
+ * These functions can be used by custom fonts to convert compressed bitmap data to A8 format
+ */
+void lv_font_convert_bitmap_1bpp_to_a8(const uint8_t * bitmap_in, uint8_t * bitmap_out, 
+                                      int32_t box_w, int32_t box_h, bool byte_aligned);
+void lv_font_convert_bitmap_2bpp_to_a8(const uint8_t * bitmap_in, uint8_t * bitmap_out, 
+                                      int32_t box_w, int32_t box_h, bool byte_aligned);
+void lv_font_convert_bitmap_4bpp_to_a8(const uint8_t * bitmap_in, uint8_t * bitmap_out, 
+                                      int32_t box_w, int32_t box_h, bool byte_aligned);
+void lv_font_convert_bitmap_8bpp_to_a8(const uint8_t * bitmap_in, uint8_t * bitmap_out, 
+                                      int32_t box_w, int32_t box_h);
+
 /**********************
  *      MACROS
  **********************/

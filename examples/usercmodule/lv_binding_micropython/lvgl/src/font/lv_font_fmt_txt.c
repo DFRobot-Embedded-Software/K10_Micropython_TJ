@@ -14,6 +14,7 @@
 #include "../misc/lv_log.h"
 #include "../misc/lv_utils.h"
 #include "../stdlib/lv_mem.h"
+#include "py/runtime.h"
 
 /*********************
  *      DEFINES
@@ -38,6 +39,16 @@ static int8_t get_kern_value(const lv_font_t * font, uint32_t gid_left, uint32_t
 static int unicode_list_compare(const void * ref, const void * element);
 static int kern_pair_8_compare(const void * ref, const void * element);
 static int kern_pair_16_compare(const void * ref, const void * element);
+
+// Generic bitmap conversion functions
+static void convert_bitmap_1bpp_to_a8(const uint8_t * bitmap_in, uint8_t * bitmap_out, 
+                                     int32_t box_w, int32_t box_h, bool byte_aligned);
+static void convert_bitmap_2bpp_to_a8(const uint8_t * bitmap_in, uint8_t * bitmap_out, 
+                                     int32_t box_w, int32_t box_h, bool byte_aligned);
+static void convert_bitmap_4bpp_to_a8(const uint8_t * bitmap_in, uint8_t * bitmap_out, 
+                                     int32_t box_w, int32_t box_h, bool byte_aligned);
+static void convert_bitmap_8bpp_to_a8(const uint8_t * bitmap_in, uint8_t * bitmap_out, 
+                                     int32_t box_w, int32_t box_h);
 
 #if LV_USE_FONT_COMPRESSED
     static void decompress(const uint8_t * in, uint8_t * out, int32_t w, int32_t h, uint8_t bpp, bool prefilter);
@@ -80,13 +91,24 @@ const void * lv_font_get_bitmap_fmt_txt(lv_font_glyph_dsc_t * g_dsc, lv_draw_buf
     const lv_font_t * font = g_dsc->resolved_font;
     uint8_t * bitmap_out = draw_buf->data;
 
+    // Debug: Print when bitmap function is called
+    mp_printf(&mp_plat_print, "FMT_TXT: get_bitmap called for gid: %d\n", g_dsc->gid.index);
+
     lv_font_fmt_txt_dsc_t * fdsc = (lv_font_fmt_txt_dsc_t *)font->dsc;
     uint32_t gid = g_dsc->gid.index;
-    if(!gid) return NULL;
+    if(!gid) {
+        mp_printf(&mp_plat_print, "FMT_TXT: Invalid gid\n");
+        return NULL;
+    }
 
     const lv_font_fmt_txt_glyph_dsc_t * gdsc = &fdsc->glyph_dsc[gid];
 
-    if(g_dsc->req_raw_bitmap) return &fdsc->glyph_bitmap[gdsc->bitmap_index];
+    if(g_dsc->req_raw_bitmap) {
+        const uint8_t * bitmap_data = &fdsc->glyph_bitmap[gdsc->bitmap_index];
+        mp_printf(&mp_plat_print, "FMT_TXT: Returning raw bitmap data at %p, first byte: 0x%02X\n", 
+                  bitmap_data, bitmap_data[0]);
+        return bitmap_data;
+    }
 
     int32_t gsize = (int32_t) gdsc->box_w * gdsc->box_h;
     if(gsize == 0) return NULL;
@@ -96,98 +118,107 @@ const void * lv_font_get_bitmap_fmt_txt(lv_font_glyph_dsc_t * g_dsc, lv_draw_buf
     if(fdsc->bitmap_format == LV_FONT_FMT_TXT_PLAIN || fdsc->bitmap_format == LV_FONT_FMT_PLAIN_ALIGNED) {
         const uint8_t * bitmap_in = &fdsc->glyph_bitmap[gdsc->bitmap_index];
         uint8_t * bitmap_out_tmp = bitmap_out;
-        int32_t i = 0;
-        int32_t x, y;
         uint32_t stride = lv_draw_buf_width_to_stride(gdsc->box_w, LV_COLOR_FORMAT_A8);
-        if(fdsc->bpp == 1) {
-            for(y = 0; y < gdsc->box_h; y ++) {
-                for(x = 0; x < gdsc->box_w; x++, i++) {
-                    i = i & 0x7;
-                    if(i == 0) bitmap_out_tmp[x] = (*bitmap_in) & 0x80 ? 0xff : 0x00;
-                    else if(i == 1) bitmap_out_tmp[x] = (*bitmap_in) & 0x40 ? 0xff : 0x00;
-                    else if(i == 2) bitmap_out_tmp[x] = (*bitmap_in) & 0x20 ? 0xff : 0x00;
-                    else if(i == 3) bitmap_out_tmp[x] = (*bitmap_in) & 0x10 ? 0xff : 0x00;
-                    else if(i == 4) bitmap_out_tmp[x] = (*bitmap_in) & 0x08 ? 0xff : 0x00;
-                    else if(i == 5) bitmap_out_tmp[x] = (*bitmap_in) & 0x04 ? 0xff : 0x00;
-                    else if(i == 6) bitmap_out_tmp[x] = (*bitmap_in) & 0x02 ? 0xff : 0x00;
-                    else if(i == 7) {
-                        bitmap_out_tmp[x] = (*bitmap_in) & 0x01 ? 0xff : 0x00;
-                        bitmap_in++;
-                    }
-                }
-                /*Go to the next byte if stopped in the middle of a byte and
-                 *the next line is byte aligned*/
-                if(byte_aligned && i != 0) {
-                    i = 0;
-                    bitmap_in++;
-                }
-                bitmap_out_tmp += stride;
-            }
+        
+        // Print input data info
+        mp_printf(&mp_plat_print, "FMT_TXT: Input data - bpp:%d, w:%d, h:%d, stride:%d, byte_aligned:%d\n", 
+                  fdsc->bpp, gdsc->box_w, gdsc->box_h, stride, byte_aligned);
+        mp_printf(&mp_plat_print, "FMT_TXT: Input bitmap at %p, first 8 bytes: ", bitmap_in);
+        for(int i = 0; i < 8 && i < (gdsc->box_w * gdsc->box_h + 7) / 8; i++) {
+            mp_printf(&mp_plat_print, "0x%02X ", bitmap_in[i]);
         }
-        else if(fdsc->bpp == 2) {
-            for(y = 0; y < gdsc->box_h; y ++) {
-                for(x = 0; x < gdsc->box_w; x++, i++) {
-                    i = i & 0x3;
-                    if(i == 0) bitmap_out_tmp[x] = opa2_table[(*bitmap_in) >> 6];
-                    else if(i == 1) bitmap_out_tmp[x] = opa2_table[((*bitmap_in) >> 4) & 0x3];
-                    else if(i == 2) bitmap_out_tmp[x] = opa2_table[((*bitmap_in) >> 2) & 0x3];
-                    else if(i == 3) {
-                        bitmap_out_tmp[x] = opa2_table[((*bitmap_in) >> 0) & 0x3];
-                        bitmap_in++;
-                    }
-                }
-
-                /*Go to the next byte if stopped in the middle of a byte and
-                 *the next line is byte aligned*/
-                if(byte_aligned && i != 0) {
-                    i = 0;
-                    bitmap_in++;
-                }
-
-                bitmap_out_tmp += stride;
-            }
-
+        mp_printf(&mp_plat_print, "\n");
+        
+        // Use generic conversion functions
+        switch(fdsc->bpp) {
+            case 1:
+                lv_font_convert_bitmap_1bpp_to_a8(bitmap_in, bitmap_out_tmp, gdsc->box_w, gdsc->box_h, byte_aligned);
+                break;
+            case 2:
+                lv_font_convert_bitmap_2bpp_to_a8(bitmap_in, bitmap_out_tmp, gdsc->box_w, gdsc->box_h, byte_aligned);
+                break;
+            case 4:
+                lv_font_convert_bitmap_4bpp_to_a8(bitmap_in, bitmap_out_tmp, gdsc->box_w, gdsc->box_h, byte_aligned);
+                break;
+            case 8:
+                lv_font_convert_bitmap_8bpp_to_a8(bitmap_in, bitmap_out_tmp, gdsc->box_w, gdsc->box_h);
+                break;
         }
-        else if(fdsc->bpp == 4) {
-            for(y = 0; y < gdsc->box_h; y ++) {
-                for(x = 0; x < gdsc->box_w; x++, i++) {
-                    i = i & 0x1;
-                    if(i == 0) {
-                        bitmap_out_tmp[x] = opa4_table[(*bitmap_in) >> 4];
-                    }
-                    else if(i == 1) {
-                        bitmap_out_tmp[x] = opa4_table[(*bitmap_in) & 0xF];
-                        bitmap_in++;
-                    }
-                }
-
-                /*Go to the next byte if stopped in the middle of a byte and
-                 *the next line is byte aligned*/
-                if(byte_aligned && i != 0) {
-                    i = 0;
-                    bitmap_in++;
-                }
-
-                bitmap_out_tmp += stride;
-            }
+        
+        // Print output data info
+        mp_printf(&mp_plat_print, "FMT_TXT: Output bitmap at %p, first 16 bytes: ", bitmap_out_tmp);
+        for(int i = 0; i < 16 && i < gdsc->box_w * gdsc->box_h; i++) {
+            mp_printf(&mp_plat_print, "0x%02X ", bitmap_out_tmp[i]);
         }
-        else if(fdsc->bpp == 8) {
-            for(y = 0; y < gdsc->box_h; y ++) {
-                for(x = 0; x < gdsc->box_w; x++, i++) {
-                    bitmap_out_tmp[x] = *bitmap_in;
-                    bitmap_in++;
-                }
-                bitmap_out_tmp += stride;
-            }
+        mp_printf(&mp_plat_print, "\n");
+        
+        // Print COMPLETE output data for K10 font to copy
+        int total_pixels = gdsc->box_w * gdsc->box_h;
+        mp_printf(&mp_plat_print, "FMT_TXT: COMPLETE OUTPUT DATA (copy this to K10):\n");
+        mp_printf(&mp_plat_print, "FMT_TXT: Total pixels: %d, stride: %d\n", total_pixels, stride);
+        mp_printf(&mp_plat_print, "FMT_TXT: uint8_t fake_data[%d] = {\n", total_pixels);
+        for(int i = 0; i < total_pixels; i++) {
+            if(i % 16 == 0) mp_printf(&mp_plat_print, "    ");
+            mp_printf(&mp_plat_print, "0x%02X", bitmap_out_tmp[i]);
+            if(i < total_pixels - 1) mp_printf(&mp_plat_print, ", ");
+            if(i % 16 == 15 || i == total_pixels - 1) mp_printf(&mp_plat_print, "\n");
         }
+        mp_printf(&mp_plat_print, "};\n");
+        
+        // Print first few lines of the bitmap for visual inspection
+        mp_printf(&mp_plat_print, "FMT_TXT: First 4 lines of bitmap (A8 format):\n");
+        for(int y = 0; y < 4 && y < gdsc->box_h; y++) {
+            mp_printf(&mp_plat_print, "FMT_TXT: Line %d: ", y);
+            for(int x = 0; x < gdsc->box_w; x++) {
+                uint8_t pixel = bitmap_out_tmp[y * stride + x];
+                if(pixel > 128) mp_printf(&mp_plat_print, "#");
+                else if(pixel > 64) mp_printf(&mp_plat_print, "+");
+                else if(pixel > 0) mp_printf(&mp_plat_print, ".");
+                else mp_printf(&mp_plat_print, " ");
+            }
+            mp_printf(&mp_plat_print, "\n");
+        }
+        
         return draw_buf;
     }
     /*Handle compressed bitmap*/
     else {
 #if LV_USE_FONT_COMPRESSED
         bool prefilter = fdsc->bitmap_format == LV_FONT_FMT_TXT_COMPRESSED;
+        
+        // Print compressed data info
+        mp_printf(&mp_plat_print, "FMT_TXT: Compressed data - bpp:%d, w:%d, h:%d, prefilter:%d\n", 
+                  fdsc->bpp, gdsc->box_w, gdsc->box_h, prefilter);
+        const uint8_t * compressed_data = &fdsc->glyph_bitmap[gdsc->bitmap_index];
+        mp_printf(&mp_plat_print, "FMT_TXT: Compressed bitmap at %p, first 8 bytes: ", compressed_data);
+        for(int i = 0; i < 8; i++) {
+            mp_printf(&mp_plat_print, "0x%02X ", compressed_data[i]);
+        }
+        mp_printf(&mp_plat_print, "\n");
+        
         decompress(&fdsc->glyph_bitmap[gdsc->bitmap_index], bitmap_out, gdsc->box_w, gdsc->box_h,
                    (uint8_t)fdsc->bpp, prefilter);
+        
+        // Print decompressed output
+        mp_printf(&mp_plat_print, "FMT_TXT: Decompressed output at %p, first 16 bytes: ", bitmap_out);
+        for(int i = 0; i < 16 && i < gdsc->box_w * gdsc->box_h; i++) {
+            mp_printf(&mp_plat_print, "0x%02X ", bitmap_out[i]);
+        }
+        mp_printf(&mp_plat_print, "\n");
+        
+        // Print COMPLETE decompressed data for K10 font to copy
+        int total_pixels = gdsc->box_w * gdsc->box_h;
+        mp_printf(&mp_plat_print, "FMT_TXT: COMPLETE DECOMPRESSED DATA (copy this to K10):\n");
+        mp_printf(&mp_plat_print, "FMT_TXT: Total pixels: %d\n", total_pixels);
+        mp_printf(&mp_plat_print, "FMT_TXT: uint8_t fake_data[%d] = {\n", total_pixels);
+        for(int i = 0; i < total_pixels; i++) {
+            if(i % 16 == 0) mp_printf(&mp_plat_print, "    ");
+            mp_printf(&mp_plat_print, "0x%02X", bitmap_out[i]);
+            if(i < total_pixels - 1) mp_printf(&mp_plat_print, ", ");
+            if(i % 16 == 15 || i == total_pixels - 1) mp_printf(&mp_plat_print, "\n");
+        }
+        mp_printf(&mp_plat_print, "};\n");
+        
         return draw_buf;
 #else /*!LV_USE_FONT_COMPRESSED*/
         LV_LOG_WARN("Compressed fonts is used but LV_USE_FONT_COMPRESSED is not enabled in lv_conf.h");
@@ -202,6 +233,10 @@ const void * lv_font_get_bitmap_fmt_txt(lv_font_glyph_dsc_t * g_dsc, lv_draw_buf
 bool lv_font_get_glyph_dsc_fmt_txt(const lv_font_t * font, lv_font_glyph_dsc_t * dsc_out, uint32_t unicode_letter,
                                    uint32_t unicode_letter_next)
 {
+    // Debug: Print when fmt_txt function is called
+    mp_printf(&mp_plat_print, "FMT_TXT: get_glyph_dsc called for char: %c (0x%02X)\n", 
+              (char)unicode_letter, unicode_letter);
+    
     /*It fixes a strange compiler optimization issue: https://github.com/lvgl/lvgl/issues/4370*/
     bool is_tab = unicode_letter == '\t';
     if(is_tab) {
@@ -209,7 +244,10 @@ bool lv_font_get_glyph_dsc_fmt_txt(const lv_font_t * font, lv_font_glyph_dsc_t *
     }
     lv_font_fmt_txt_dsc_t * fdsc = (lv_font_fmt_txt_dsc_t *)font->dsc;
     uint32_t gid = get_glyph_dsc_id(font, unicode_letter);
-    if(!gid) return false;
+    if(!gid) {
+        mp_printf(&mp_plat_print, "FMT_TXT: Character not found in font\n");
+        return false;
+    }
 
     int8_t kvalue = 0;
     if(fdsc->kern_dsc) {
@@ -244,6 +282,10 @@ bool lv_font_get_glyph_dsc_fmt_txt(const lv_font_t * font, lv_font_glyph_dsc_t *
     dsc_out->gid.index = gid;
 
     if(is_tab) dsc_out->box_w = dsc_out->box_w * 2;
+
+    // Debug: Print glyph descriptor info
+    mp_printf(&mp_plat_print, "FMT_TXT: Glyph descriptor set - adv_w:%d, box_w:%d, box_h:%d, format:%d, gid:%d\n",
+              dsc_out->adv_w, dsc_out->box_w, dsc_out->box_h, dsc_out->format, dsc_out->gid.index);
 
     return true;
 }
@@ -594,4 +636,151 @@ static inline uint8_t rle_next(void)
 static int unicode_list_compare(const void * ref, const void * element)
 {
     return (*(uint16_t *)ref) - (*(uint16_t *)element);
+}
+
+/**********************
+ *  GENERIC CONVERSION FUNCTIONS
+ **********************/
+
+/**
+ * Convert 1bpp bitmap to A8 format
+ * @param bitmap_in input bitmap data
+ * @param bitmap_out output A8 buffer
+ * @param box_w width of the glyph
+ * @param box_h height of the glyph
+ * @param byte_aligned whether lines are byte aligned
+ */
+void lv_font_convert_bitmap_1bpp_to_a8(const uint8_t * bitmap_in, uint8_t * bitmap_out, 
+                                      int32_t box_w, int32_t box_h, bool byte_aligned)
+{
+    int32_t i = 0;
+    int32_t x, y;
+    // Use simple stride calculation - just box_w for A8 format
+    uint32_t stride = box_w;
+    
+    // Debug info
+    mp_printf(&mp_plat_print, "FMT_TXT_CONV: Converting 1bpp to A8, w=%d, h=%d, stride=%d\n", 
+              box_w, box_h, stride);
+    
+    for(y = 0; y < box_h; y ++) {
+        for(x = 0; x < box_w; x++, i++) {
+            i = i & 0x7;
+            if(i == 0) bitmap_out[x] = (*bitmap_in) & 0x80 ? 0xff : 0x00;
+            else if(i == 1) bitmap_out[x] = (*bitmap_in) & 0x40 ? 0xff : 0x00;
+            else if(i == 2) bitmap_out[x] = (*bitmap_in) & 0x20 ? 0xff : 0x00;
+            else if(i == 3) bitmap_out[x] = (*bitmap_in) & 0x10 ? 0xff : 0x00;
+            else if(i == 4) bitmap_out[x] = (*bitmap_in) & 0x08 ? 0xff : 0x00;
+            else if(i == 5) bitmap_out[x] = (*bitmap_in) & 0x04 ? 0xff : 0x00;
+            else if(i == 6) bitmap_out[x] = (*bitmap_in) & 0x02 ? 0xff : 0x00;
+            else if(i == 7) {
+                bitmap_out[x] = (*bitmap_in) & 0x01 ? 0xff : 0x00;
+                bitmap_in++;
+            }
+        }
+        /*Go to the next byte if stopped in the middle of a byte and
+         *the next line is byte aligned*/
+        if(byte_aligned && i != 0) {
+            i = 0;
+            bitmap_in++;
+        }
+        bitmap_out += stride;
+    }
+}
+
+/**
+ * Convert 2bpp bitmap to A8 format
+ * @param bitmap_in input bitmap data
+ * @param bitmap_out output A8 buffer
+ * @param box_w width of the glyph
+ * @param box_h height of the glyph
+ * @param byte_aligned whether lines are byte aligned
+ */
+void lv_font_convert_bitmap_2bpp_to_a8(const uint8_t * bitmap_in, uint8_t * bitmap_out, 
+                                      int32_t box_w, int32_t box_h, bool byte_aligned)
+{
+    int32_t i = 0;
+    int32_t x, y;
+    uint32_t stride = box_w;
+    
+    for(y = 0; y < box_h; y ++) {
+        for(x = 0; x < box_w; x++, i++) {
+            i = i & 0x3;
+            if(i == 0) bitmap_out[x] = opa2_table[(*bitmap_in) >> 6];
+            else if(i == 1) bitmap_out[x] = opa2_table[((*bitmap_in) >> 4) & 0x3];
+            else if(i == 2) bitmap_out[x] = opa2_table[((*bitmap_in) >> 2) & 0x3];
+            else if(i == 3) {
+                bitmap_out[x] = opa2_table[((*bitmap_in) >> 0) & 0x3];
+                bitmap_in++;
+            }
+        }
+
+        /*Go to the next byte if stopped in the middle of a byte and
+         *the next line is byte aligned*/
+        if(byte_aligned && i != 0) {
+            i = 0;
+            bitmap_in++;
+        }
+
+        bitmap_out += stride;
+    }
+}
+
+/**
+ * Convert 4bpp bitmap to A8 format
+ * @param bitmap_in input bitmap data
+ * @param bitmap_out output A8 buffer
+ * @param box_w width of the glyph
+ * @param box_h height of the glyph
+ * @param byte_aligned whether lines are byte aligned
+ */
+void lv_font_convert_bitmap_4bpp_to_a8(const uint8_t * bitmap_in, uint8_t * bitmap_out, 
+                                      int32_t box_w, int32_t box_h, bool byte_aligned)
+{
+    int32_t i = 0;
+    int32_t x, y;
+    uint32_t stride = box_w;
+    
+    for(y = 0; y < box_h; y ++) {
+        for(x = 0; x < box_w; x++, i++) {
+            i = i & 0x1;
+            if(i == 0) {
+                bitmap_out[x] = opa4_table[(*bitmap_in) >> 4];
+            }
+            else if(i == 1) {
+                bitmap_out[x] = opa4_table[(*bitmap_in) & 0xF];
+                bitmap_in++;
+            }
+        }
+
+        /*Go to the next byte if stopped in the middle of a byte and
+         *the next line is byte aligned*/
+        if(byte_aligned && i != 0) {
+            i = 0;
+            bitmap_in++;
+        }
+
+        bitmap_out += stride;
+    }
+}
+
+/**
+ * Convert 8bpp bitmap to A8 format
+ * @param bitmap_in input bitmap data
+ * @param bitmap_out output A8 buffer
+ * @param box_w width of the glyph
+ * @param box_h height of the glyph
+ */
+void lv_font_convert_bitmap_8bpp_to_a8(const uint8_t * bitmap_in, uint8_t * bitmap_out, 
+                                      int32_t box_w, int32_t box_h)
+{
+    int32_t x, y;
+    uint32_t stride = box_w;
+    
+    for(y = 0; y < box_h; y ++) {
+        for(x = 0; x < box_w; x++) {
+            bitmap_out[x] = *bitmap_in;
+            bitmap_in++;
+        }
+        bitmap_out += stride;
+    }
 }

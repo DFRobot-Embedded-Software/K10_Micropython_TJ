@@ -210,6 +210,10 @@ LV_FONT_DECLARE(lv_font_montserrat_16)
 LV_FONT_DECLARE(lv_font_k10_16)
 #endif
 
+#if LV_FONT_K10_TEST_16
+LV_FONT_DECLARE(lv_font_k10_test_16)
+#endif
+
 #if LV_FONT_MONTSERRAT_18
 LV_FONT_DECLARE(lv_font_montserrat_18)
 #endif
