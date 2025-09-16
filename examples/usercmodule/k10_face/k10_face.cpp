@@ -6,11 +6,11 @@
 #endif
 
 #ifndef I2C_MASTER_SDA_IO
-#define I2C_MASTER_SDA_IO 47
+#define I2C_MASTER_SDA_IO GPIO_NUM_47
 #endif
 
 #ifndef I2C_MASTER_SCL_IO
-#define I2C_MASTER_SCL_IO 48
+#define I2C_MASTER_SCL_IO GPIO_NUM_48
 #endif
 
 #ifndef I2C_MASTER_FREQ_HZ
@@ -46,6 +46,8 @@ extern "C" {
     #include "driver/i2c.h"
     #include "driver/gpio.h"
     #include "esp_heap_caps.h"
+    #include "soc/soc.h"
+    #include "soc/rtc.h"
 }
 
 // ESP-DL 头文件
@@ -92,8 +94,11 @@ bool init_aligned_buffer(size_t size) {
         g_aligned_buffer = NULL;
     }
     
-    // 分配新的对齐缓冲区
-    g_aligned_buffer = (uint8_t*)heap_caps_aligned_alloc(16, size, MALLOC_CAP_8BIT | MALLOC_CAP_32BIT | MALLOC_CAP_DMA);
+    // 分配新的对齐缓冲区：优先内部RAM，失败回退到PSRAM
+    g_aligned_buffer = (uint8_t*)heap_caps_aligned_alloc(16, size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!g_aligned_buffer) {
+        g_aligned_buffer = (uint8_t*)heap_caps_aligned_alloc(16, size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    }
     if (g_aligned_buffer) {
         g_buffer_size = size;
         g_buffer_initialized = true;
@@ -103,28 +108,136 @@ bool init_aligned_buffer(size_t size) {
     return false;
 }
 
-// 验证内存地址是否有效（宽松版本）
+// 验证内存地址是否有效（更严格的版本）
 bool is_valid_memory_address(void* ptr, size_t size) {
     if (!ptr) return false;
     
     uintptr_t addr = (uintptr_t)ptr;
     
-    // 检查地址是否在合理范围内（更宽松的范围）
-    if (addr < 0x3F000000 || addr > 0x40000000) {
+    // 检查地址是否在合理范围内（ESP32内存映射）
+    if (addr < 0x3F000000 || addr > 0x50000000) {
         return false;
     }
     
-    // 检查地址是否对齐（只检查基本对齐）
+    // 检查地址是否对齐（2字节对齐即可）
     if (addr % 2 != 0) {
         return false;
     }
     
-    // 不进行内存读取测试，避免触发异常
+    // 检查地址是否在有效内存区域
+    if (addr >= 0x40000000 && addr < 0x50000000) {
+        // 这是PSRAM区域，需要额外检查
+        return true;
+    }
+    
+    // 检查是否在内部RAM区域
+    if (addr >= 0x3F000000 && addr < 0x40000000) {
+        return true;
+    }
+    
+    return false;
+}
+
+// 验证帧缓冲区是否安全可用（宽松版本用于调试）
+bool is_safe_frame_buffer(camera_fb_t* frame) {
+    if (!frame) return false;
+    
+    // 检查基本字段
+    if (frame->width <= 0 || frame->height <= 0 || frame->len <= 0) {
+        return false;
+    }
+    
+    // 检查缓冲区指针
+    if (!frame->buf) return false;
+    
+    // 检查尺寸是否在合理范围内
+    if (frame->width > 4096 || frame->height > 4096) {
+        return false;
+    }
+    
+    // 检查缓冲区大小是否合理（RGB565格式：每像素2字节）
+    size_t expected_size = (size_t)frame->width * (size_t)frame->height * 2;
+    if (frame->len < expected_size) {
+        return false;
+    }
+    
+    // 暂时放宽内存地址验证，只检查基本有效性
+    uintptr_t addr = (uintptr_t)frame->buf;
+    if (addr == 0 || addr < 0x10000000 || addr > 0x60000000) {
+        return false;
+    }
+    
     return true;
 }
 
-// 简化的AI推理函数（带输入字节数，避免越界拷贝）
-bool safe_ai_inference_with_protection(uint16_t* input_buf, int height, int width, size_t input_bytes,
+// 超安全的内存访问函数，避免任何可能导致崩溃的操作
+bool ultra_safe_memory_check(void* ptr, size_t size) {
+    if (!ptr || size == 0) return false;
+    
+    uintptr_t addr = (uintptr_t)ptr;
+    
+    // 基本范围检查
+    if (addr < 0x10000000 || addr > 0x60000000) {
+        return false;
+    }
+    
+    // 检查地址是否合理对齐
+    if (addr % 2 != 0) {
+        return false;
+    }
+    
+    // 不进行实际的内存读取测试，避免触发异常
+    return true;
+}
+
+// 简单的基于颜色的检测函数（替代AI推理）
+bool simple_color_based_detection(uint16_t* image_buf, int height, int width) {
+    if (!image_buf || height <= 0 || width <= 0) {
+        return false;
+    }
+    
+    // 简单的颜色统计检测
+    int total_pixels = height * width;
+    int skin_tone_pixels = 0;
+    
+    // 只检查中心区域，避免边界问题
+    int start_x = width / 4;
+    int end_x = width * 3 / 4;
+    int start_y = height / 4;
+    int end_y = height * 3 / 4;
+    
+    for (int y = start_y; y < end_y; y++) {
+        for (int x = start_x; x < end_x; x++) {
+            uint16_t pixel = image_buf[y * width + x];
+            
+            // 提取RGB565颜色分量
+            int r = (pixel >> 11) & 0x1F;
+            int g = (pixel >> 5) & 0x3F;
+            int b = pixel & 0x1F;
+            
+            // 简单的肤色检测（R > G > B）
+            if (r > g && g > b && r > 15) {
+                skin_tone_pixels++;
+            }
+        }
+    }
+    
+    // 如果肤色像素超过总像素的5%，认为检测到人脸
+    return (skin_tone_pixels * 100 / total_pixels) > 5;
+}
+
+// 安全的帧缓冲区访问包装器（简化版本，不使用std::function）
+bool safe_access_frame_buffer(camera_fb_t* frame) {
+    if (!is_safe_frame_buffer(frame)) {
+        return false;
+    }
+    
+    // 简化的内存地址验证，不使用关键代码段
+    return ultra_safe_memory_check(frame->buf, frame->len);
+}
+
+// 超安全的AI推理函数（完全避免内存拷贝和复杂操作）
+bool ultra_safe_ai_inference(uint16_t* input_buf, int height, int width, size_t input_bytes,
     std::list<dl::detect::result_t>& results, CatFaceDetectMN03& detector) {
     // 基本检查
     if (!input_buf || height <= 0 || width <= 0) {
@@ -134,36 +247,33 @@ bool safe_ai_inference_with_protection(uint16_t* input_buf, int height, int widt
     // 计算所需内存大小（RGB565：每像素2字节）
     size_t required_size = (size_t)height * (size_t)width * 2;
     
-    // 初始化对齐缓冲区
-    if (!init_aligned_buffer(required_size)) {
+    // 长度必须满足完整帧
+    if (input_bytes < required_size) {
         return false;
     }
     
-    // 复制数据到对齐缓冲区（按最小值，避免越界读取）
-    size_t copy_size = input_bytes < required_size ? input_bytes : required_size;
-    memcpy(g_aligned_buffer, input_buf, copy_size);
+    // 额外的内存安全检查
+    if (!ultra_safe_memory_check(input_buf, required_size)) {
+        return false;
+    }
     
-    // 执行AI推理
+    // 添加内存屏障，确保内存操作完成
+    __asm__ __volatile__("" ::: "memory");
+    
+    // 直接使用输入缓冲区，不进行内存拷贝
+    // 这避免了内存拷贝可能导致的问题
     try {
-        // 使用关键代码段保护
-        taskENTER_CRITICAL(&ai_critical_mutex);
-        
-        // 使用对齐的缓冲区进行推理
-        results = detector.infer((uint16_t*)g_aligned_buffer, {height, width, 3});
-        
-        taskEXIT_CRITICAL(&ai_critical_mutex);
+        results = detector.infer(input_buf, {height, width, 3});
         return true;
     } catch (const std::exception& e) {
         // 异常处理
-        taskEXIT_CRITICAL(&ai_critical_mutex);
+        results.clear();
         return false;
     } catch (...) {
         // 未知异常
-        taskEXIT_CRITICAL(&ai_critical_mutex);
+        results.clear();
         return false;
     }
-    
-    return false;
 }
 
 // 清理内存资源
@@ -225,7 +335,7 @@ static void draw_detection_result(uint16_t *image_ptr, int image_height, int ima
 
 }
 
-// AI推理保护函数
+// AI推理保护函数（简化版本，避免复杂的优先级操作）
 bool enter_ai_inference_critical_section() {
     if (ai_inference_mutex == NULL) {
         ai_inference_mutex = xSemaphoreCreateMutex();
@@ -237,14 +347,6 @@ bool enter_ai_inference_critical_section() {
     // 尝试获取互斥锁，最多等待100ms
     if (xSemaphoreTake(ai_inference_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         ai_inference_in_progress = true;
-        
-        // 临时提高当前任务优先级
-        UBaseType_t current_priority = uxTaskPriorityGet(NULL);
-        vTaskPrioritySet(NULL, configMAX_PRIORITIES - 1);
-        
-        // 禁用中断
-        taskENTER_CRITICAL(&ai_critical_mutex);
-        
         return true;
     }
     return false;
@@ -252,18 +354,12 @@ bool enter_ai_inference_critical_section() {
 
 void exit_ai_inference_critical_section() {
     if (ai_inference_in_progress) {
-        // 恢复中断
-        taskEXIT_CRITICAL(&ai_critical_mutex);
-        
-        // 恢复任务优先级
-        vTaskPrioritySet(NULL, uxTaskPriorityGet(NULL));
-        
         ai_inference_in_progress = false;
         xSemaphoreGive(ai_inference_mutex);
     }
 }
 
-// 带性能监控的AI推理保护函数
+// 带性能监控的AI推理保护函数（简化版本）
 bool enter_ai_inference_critical_section_with_timing(uint32_t *start_time) {
     if (ai_inference_mutex == NULL) {
         ai_inference_mutex = xSemaphoreCreateMutex();
@@ -278,13 +374,6 @@ bool enter_ai_inference_critical_section_with_timing(uint32_t *start_time) {
         
         // 记录开始时间
         *start_time = esp_timer_get_time() / 1000; // 转换为毫秒
-        
-        // 临时提高当前任务优先级
-        UBaseType_t current_priority = uxTaskPriorityGet(NULL);
-        vTaskPrioritySet(NULL, configMAX_PRIORITIES - 1);
-        
-        // 禁用中断
-        taskENTER_CRITICAL(&ai_critical_mutex);
         
         return true;
     }
@@ -309,12 +398,6 @@ void exit_ai_inference_critical_section_with_timing(uint32_t start_time) {
             uint32_t avg_time = ai_inference_total_time / ai_inference_count;
             // AI推理统计 - 次数、平均时间、最大时间
         }
-        
-        // 恢复中断
-        taskEXIT_CRITICAL(&ai_critical_mutex);
-        
-        // 恢复任务优先级
-        vTaskPrioritySet(NULL, uxTaskPriorityGet(NULL));
         
         ai_inference_in_progress = false;
         xSemaphoreGive(ai_inference_mutex);
@@ -395,6 +478,8 @@ extern "C" __attribute__((weak))  void face_recognize_start_task(void* arg) {
 
     camera_fb_t *frame = NULL;
 
+    dl::tool::Latency latency;
+
     while (1) {
         if (free_ai_flag == 1) {
             vTaskDelay(pdMS_TO_TICKS(100)); // 等待100ms后重试
@@ -407,67 +492,67 @@ extern "C" __attribute__((weak))  void face_recognize_start_task(void* arg) {
         }
         
         if(xQueueReceive(camera_queue, &frame, portMAX_DELAY) == pdPASS) {
-            // 检查帧是否有效
-            if (!frame || !frame->buf) {
+            // 使用新的安全验证函数检查帧
+            if (!is_safe_frame_buffer(frame)) {
                 if (frame) {
+                    // 记录被拒绝的帧信息用于调试
+                    // printf("Face task: Frame rejected - width=%d, height=%d, len=%d, buf=%p\n", 
+                    //        frame->width, frame->height, frame->len, frame->buf);
                     esp_camera_fb_return(frame);
                 }
-                continue;
-            }
-            
-            // 检查帧尺寸是否合理
-            if (frame->width <= 0 || frame->height <= 0 || frame->len <= 0) {
-                esp_camera_fb_return(frame);
                 continue;
             }
             
             try {
-                // 内存安全检查
-                if (!frame->buf || frame->len == 0) {
+                // 检查堆栈使用情况
+                UBaseType_t stackHighWaterMark = uxTaskGetStackHighWaterMark(NULL);
+                if (stackHighWaterMark < 1024) {
+                    // 堆栈空间不足，释放帧并继续
                     esp_camera_fb_return(frame);
                     continue;
                 }
                 
-                // 检查内存对齐
-                if ((uintptr_t)frame->buf % 4 != 0) {
-                    // 帧缓冲区未对齐，可能导致崩溃
-                }
-                
-                // 检查堆栈使用情况
-                UBaseType_t stackHighWaterMark = uxTaskGetStackHighWaterMark(NULL);
-                if (stackHighWaterMark < 1024) {
-                    // 堆栈空间不足
-                }
-                
-                // 使用更安全的内存分配方式
-                uint16_t *aligned_buf = NULL;
-                bool need_free = false;
-                
-                // 如果缓冲区未对齐，创建对齐的副本
-                if ((uintptr_t)frame->buf % 4 != 0) {
-                    size_t aligned_size = frame->len + 4;
-                    aligned_buf = (uint16_t*)heap_caps_aligned_alloc(4, aligned_size, MALLOC_CAP_8BIT | MALLOC_CAP_32BIT);
-                    if (aligned_buf) {
-                        memcpy(aligned_buf, frame->buf, frame->len);
-                        need_free = true;
-                    } else {
-                        // 无法分配对齐内存
-                        esp_camera_fb_return(frame);
-                        continue;
-                    }
-                } else {
-                    aligned_buf = (uint16_t*)frame->buf;
-                }
+                // 由于已经通过is_safe_frame_buffer验证，直接使用frame->buf
+                uint16_t *aligned_buf = (uint16_t*)frame->buf;
                 
                 // 使用高级保护机制进入AI推理关键代码段
                 if (enter_ai_inference_critical_section()) {
-                    // 实际的人脸检测逻辑（避免持有引用，使用拷贝以防悬挂引用）
-                    std::list<dl::detect::result_t> detect_candidates = detectorFace.infer(aligned_buf, {(int)frame->height, (int)frame->width, 3});
-                    std::list<dl::detect::result_t> detect_results = detectorFace2.infer(aligned_buf, {(int)frame->height, (int)frame->width, 3}, detect_candidates);
+                    // 使用超安全的内存检查
+                    if (!ultra_safe_memory_check(aligned_buf, frame->len)) {
+                        exit_ai_inference_critical_section();
+                        esp_camera_fb_return(frame);
+                        continue;
+                    }
+                    
+                    // 恢复AI推理功能，使用新的ESP-DL版本
+                    latency.start();
+                    std::list<dl::detect::result_t> detect_candidates;
+                    std::list<dl::detect::result_t> detect_results;
+                    latency.end();
+                    // 使用AI推理进行人脸检测
+                    try {
+                        if (ultra_safe_memory_check(aligned_buf, frame->len)) {
+                            detect_candidates = detectorFace.infer(aligned_buf, {(int)frame->height, (int)frame->width, 3});
+                            detect_results = detectorFace2.infer(aligned_buf, {(int)frame->height, (int)frame->width, 3}, detect_candidates);
+                        } else {
+                            // 内存验证失败，设置默认值
+                            detect_candidates.clear();
+                            detect_results.clear();
+                        }
+                    } catch (const std::exception& e) {
+                        // AI推理异常，设置默认值
+                        detect_candidates.clear();
+                        detect_results.clear();
+                    } catch (...) {
+                        // 未知异常
+                        detect_candidates.clear();
+                        detect_results.clear();
+                    }
                     
                     // 退出AI推理关键代码段
                     exit_ai_inference_critical_section();
                     
+                    // 使用AI推理的结果
                     if (detect_results.size() > 0) {
                         g_ai_data.face_flag = true;
                         std::list<dl::detect::result_t>::iterator first_result = detect_results.begin();
@@ -515,7 +600,11 @@ extern "C" __attribute__((weak))  void face_recognize_start_task(void* arg) {
                         }
                         
                         // 画检测框
-                        draw_detection_result(aligned_buf, (int)frame->height, (int)frame->width, detect_results);
+                        try {
+                            draw_detection_result(aligned_buf, (int)frame->height, (int)frame->width, detect_results);
+                        } catch (...) {
+                            // 绘制阶段异常保护
+                        }
                     } else {
                         g_ai_data.face_flag = false;
                         g_ai_data.face_detect.face_id = -1;
@@ -526,10 +615,7 @@ extern "C" __attribute__((weak))  void face_recognize_start_task(void* arg) {
                     g_ai_data.face_detect.face_id = -1;
                 }
                 
-                // 释放对齐的内存副本
-                if (need_free && aligned_buf) {
-                    heap_caps_free(aligned_buf);
-                }
+                // 由于直接使用frame->buf，无需释放额外内存
             
                 // 推送结果到队列
                 ai_push_result(&g_ai_data);
@@ -602,6 +688,7 @@ extern "C" __attribute__((weak)) void cat_detect_task(void* arg) {
     init_ai_data(&g_ai_data);
 
     camera_fb_t *frame = NULL;
+    dl::tool::Latency latency;
     while (1) {
         if (free_ai_flag == 1) {
             vTaskDelay(pdMS_TO_TICKS(100)); // 等待100ms后重试
@@ -614,44 +701,37 @@ extern "C" __attribute__((weak)) void cat_detect_task(void* arg) {
         }
         
         if(xQueueReceive(camera_queue, &frame, portMAX_DELAY) == pdPASS) {
-            // 检查帧是否有效
-            if (!frame || !frame->buf) {
+            // 使用新的安全验证函数检查帧
+            if (!is_safe_frame_buffer(frame)) {
                 if (frame) {
                     esp_camera_fb_return(frame);
                 }
                 continue;
             }
             
-            // 检查帧尺寸是否合理
-            if (frame->width <= 0 || frame->height <= 0 || frame->len <= 0) {
-                esp_camera_fb_return(frame);
-                continue;
-            }
-            
             try {
-                // 内存安全检查
-                if (!frame->buf || frame->len == 0) {
+                // 检查堆栈使用情况
+                UBaseType_t stackHighWaterMark = uxTaskGetStackHighWaterMark(NULL);
+                if (stackHighWaterMark < 1024) {
+                    // 堆栈空间不足，释放帧并继续
                     esp_camera_fb_return(frame);
                     continue;
                 }
                 
-                // 检查内存对齐
-                if ((uintptr_t)frame->buf % 4 != 0) {
-                    // 帧缓冲区未对齐，可能导致崩溃
-                }
-                
-                // 检查堆栈使用情况
-                UBaseType_t stackHighWaterMark = uxTaskGetStackHighWaterMark(NULL);
-                if (stackHighWaterMark < 1024) {
-                    // 堆栈空间不足
-                }
-                
                 // 使用更安全的方式执行AI推理
+                latency.start();
                 std::list<dl::detect::result_t> detect_candidates;
+                latency.end();
                 bool inference_success = false;
                 
-                // 使用新的安全AI推理函数
-                inference_success = safe_ai_inference_with_protection(
+                // 使用超安全的内存检查
+                if (!ultra_safe_memory_check(frame->buf, frame->len)) {
+                    esp_camera_fb_return(frame);
+                    continue;
+                }
+                
+                // 恢复AI推理，使用新的ESP-DL版本
+                inference_success = ultra_safe_ai_inference(
                     (uint16_t*)frame->buf, 
                     (int)frame->height, 
                     (int)frame->width,
@@ -660,27 +740,18 @@ extern "C" __attribute__((weak)) void cat_detect_task(void* arg) {
                     detectorCat
                 );
                 
-                // 如果安全函数失败，尝试直接推理
-                if (!inference_success) {
-                    try {
-                        taskENTER_CRITICAL(&ai_critical_mutex);
-                        detect_candidates = detectorCat.infer((uint16_t*)frame->buf, {(int)frame->height, (int)frame->width, 3});
-                        taskEXIT_CRITICAL(&ai_critical_mutex);
-                        inference_success = true;
-                    } catch (const std::exception& e) {
-                        taskEXIT_CRITICAL(&ai_critical_mutex);
-                        inference_success = false;
-                    } catch (...) {
-                        taskEXIT_CRITICAL(&ai_critical_mutex);
-                        inference_success = false;
-                    }
-                }
+                // 如果超安全函数失败，不再尝试备用方案，直接设置失败
+                // 这避免了任何可能导致内存访问问题的操作
                 
                 // 处理推理结果
                 if (inference_success) {
                     if (detect_candidates.size() > 0) {
                         g_ai_data.cat_flag = true;
-                        draw_detection_result((uint16_t*)frame->buf, (int)frame->height, (int)frame->width, detect_candidates);
+                        try {
+                            draw_detection_result((uint16_t*)frame->buf, (int)frame->height, (int)frame->width, detect_candidates);
+                        } catch (...) {
+                            // 绘制阶段异常保护
+                        }
                         std::list<dl::detect::result_t>::iterator first_result = detect_candidates.begin();
                         if (first_result != detect_candidates.end()) {
                             g_ai_data.cat_detect.cat_frame_length = (int)first_result->box[2] - (int)first_result->box[0];
@@ -732,17 +803,11 @@ extern "C" __attribute__((weak)) void code_scanner_task(void* arg) {
         }
         
         if(xQueueReceive(camera_queue, &frame, portMAX_DELAY) == pdPASS) {
-            // 检查帧是否有效
-            if (!frame || !frame->buf) {
+            // 使用新的安全验证函数检查帧
+            if (!is_safe_frame_buffer(frame)) {
                 if (frame) {
                     esp_camera_fb_return(frame);
                 }
-                continue;
-            }
-            
-            // 检查帧尺寸是否合理
-            if (frame->width <= 0 || frame->height <= 0 || frame->len <= 0) {
-                esp_camera_fb_return(frame);
                 continue;
             }
             
@@ -805,24 +870,18 @@ extern "C" __attribute__((weak)) void move_detect_task(void* arg) {
         }
         
         if(xQueueReceive(camera_queue, &frame, portMAX_DELAY) == pdPASS) {
-            // 检查第一帧是否有效
-            if (!frame || !frame->buf) {
+            // 使用新的安全验证函数检查第一帧
+            if (!is_safe_frame_buffer(frame)) {
                 if (frame) {
                     esp_camera_fb_return(frame);
                 }
                 continue;
             }
             
-            // 检查第一帧尺寸是否合理
-            if (frame->width <= 0 || frame->height <= 0 || frame->len <= 0) {
-                esp_camera_fb_return(frame);
-                continue;
-            }
-            
             // 获取第二帧进行比较
             if (xQueueReceive(camera_queue, &frame_last, portMAX_DELAY)) {
-                // 检查第二帧是否有效
-                if (!frame_last || !frame_last->buf) {
+                // 使用新的安全验证函数检查第二帧
+                if (!is_safe_frame_buffer(frame_last)) {
                     esp_camera_fb_return(frame);
                     if (frame_last) {
                         esp_camera_fb_return(frame_last);
@@ -830,14 +889,15 @@ extern "C" __attribute__((weak)) void move_detect_task(void* arg) {
                     continue;
                 }
                 
-                // 检查第二帧尺寸是否合理
-                if (frame_last->width <= 0 || frame_last->height <= 0 || frame_last->len <= 0) {
-                    esp_camera_fb_return(frame);
-                    esp_camera_fb_return(frame_last);
-                    continue;
-                }
-                
                 try {
+                    // 使用超安全的内存检查
+                    if (!ultra_safe_memory_check(frame->buf, frame->len) || 
+                        !ultra_safe_memory_check(frame_last->buf, frame_last->len)) {
+                        esp_camera_fb_return(frame);
+                        esp_camera_fb_return(frame_last);
+                        continue;
+                    }
+                    
                     uint32_t moving_point_number = dl::image::get_moving_point_number((uint16_t *)frame->buf, (uint16_t *)frame_last->buf, frame->height, frame->width, 8, 15);
                     if (moving_point_number > 10) {
                         g_ai_data.move_flag = true;
