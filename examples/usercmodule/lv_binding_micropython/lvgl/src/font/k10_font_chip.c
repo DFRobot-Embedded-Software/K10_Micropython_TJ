@@ -163,7 +163,7 @@ static int k10_spi_init(void) {
     return 1;
 }
 
-// SPI read data function
+// 已确认SPI read data function
 static unsigned char k10_spi_read_data(unsigned char* sendbuf, unsigned char sendlen, 
                                       unsigned char* receivebuf, unsigned int receivelen) {
     if (!spi_initialized || spi_device == NULL) {
@@ -172,26 +172,13 @@ static unsigned char k10_spi_read_data(unsigned char* sendbuf, unsigned char sen
         return 0;
     }
     
-    mp_printf(&mp_plat_print, "K10_SPI: Starting SPI transaction (send:%d bytes, recv:%d bytes)\n", sendlen, receivelen);
-    mp_hal_delay_ms(10);
-    
     xSemaphoreTake(spi_mutex, portMAX_DELAY);
-    mp_printf(&mp_plat_print, "K10_SPI: SPI mutex acquired\n");
-    mp_hal_delay_ms(10);
     
     // CS high (active) - Arduino style
     gpio_set_level(FONTCS, 1);
-    mp_printf(&mp_plat_print, "K10_SPI: CS set to high (active, Arduino style)\n");
-    mp_hal_delay_ms(10);
     
     // Send command and address
     if (sendlen > 0) {
-        mp_printf(&mp_plat_print, "K10_SPI: Sending %d bytes: ", sendlen);
-        for (int i = 0; i < sendlen; i++) {
-            mp_printf(&mp_plat_print, "0x%02X ", sendbuf[i]);
-        }
-        mp_printf(&mp_plat_print, "\n");
-        mp_hal_delay_ms(10);
         
         spi_transaction_t trans = {
             .length = sendlen * 8,  // Length in bits
@@ -200,21 +187,14 @@ static unsigned char k10_spi_read_data(unsigned char* sendbuf, unsigned char sen
         };
         esp_err_t ret = spi_device_transmit(spi_device, &trans);
         if (ret != ESP_OK) {
-            mp_printf(&mp_plat_print, "K10_SPI: Send transaction failed: %s\n", esp_err_to_name(ret));
-            mp_hal_delay_ms(10);
             gpio_set_level(FONTCS, 1);  // CS high (inactive)
             xSemaphoreGive(spi_mutex);
             return 0;
         }
-        mp_printf(&mp_plat_print, "K10_SPI: Send transaction completed\n");
-        mp_hal_delay_ms(10);
     }
     
     // Receive data
     if (receivelen > 0) {
-        mp_printf(&mp_plat_print, "K10_SPI: Receiving %d bytes\n", receivelen);
-        mp_hal_delay_ms(10);
-        
         spi_transaction_t trans = {
             .length = receivelen * 8,  // Length in bits
             .tx_buffer = NULL,
@@ -222,8 +202,6 @@ static unsigned char k10_spi_read_data(unsigned char* sendbuf, unsigned char sen
         };
         esp_err_t ret = spi_device_transmit(spi_device, &trans);
         if (ret != ESP_OK) {
-            mp_printf(&mp_plat_print, "K10_SPI: Receive transaction failed: %s\n", esp_err_to_name(ret));
-            mp_hal_delay_ms(10);
             gpio_set_level(FONTCS, 1);  // CS high (inactive)
             xSemaphoreGive(spi_mutex);
             return 0;
@@ -233,28 +211,15 @@ static unsigned char k10_spi_read_data(unsigned char* sendbuf, unsigned char sen
         for (int i = 0; i < receivelen && i < 16; i++) {  // Print first 16 bytes
             mp_printf(&mp_plat_print, "0x%02X ", receivebuf[i]);
         }
-        if (receivelen > 16) {
-            mp_printf(&mp_plat_print, "...");
-        }
-        mp_printf(&mp_plat_print, "\n");
-        mp_hal_delay_ms(10);
     }
-    
     // CS low (inactive) - Arduino style
     gpio_set_level(FONTCS, 0);
-    mp_printf(&mp_plat_print, "K10_SPI: CS set to low (inactive, Arduino style)\n");
-    mp_hal_delay_ms(10);
     
     xSemaphoreGive(spi_mutex);
-    mp_printf(&mp_plat_print, "K10_SPI: SPI mutex released\n");
-    mp_hal_delay_ms(10);
-    
-    mp_printf(&mp_plat_print, "K10_SPI: SPI transaction completed successfully\n");
-    mp_hal_delay_ms(10);
     return 1;
 }
 
-// Read data batch from font chip
+// 已确认Read data batch from font chip
 static unsigned long k10_read_data_batch(unsigned long address, unsigned long DataLen, unsigned char *pBuff) {
     if (!spi_initialized || spi_device == NULL) {
         mp_printf(&mp_plat_print, "K10_SPI: Batch read failed - SPI not initialized\n");
@@ -262,18 +227,11 @@ static unsigned long k10_read_data_batch(unsigned long address, unsigned long Da
         return 0;
     }
     
-    mp_printf(&mp_plat_print, "K10_SPI: Batch read - address:0x%06lX, length:%lu bytes\n", address, DataLen);
-    mp_hal_delay_ms(10);
     
     xSemaphoreTake(spi_mutex, portMAX_DELAY);
-    mp_printf(&mp_plat_print, "K10_SPI: Batch read mutex acquired\n");
-    mp_hal_delay_ms(10);
     
     // CS high (active) - Arduino style
     gpio_set_level(FONTCS, 1);
-    mp_printf(&mp_plat_print, "K10_SPI: Batch read CS set to high (Arduino style)\n");
-    mp_hal_delay_ms(10);
-    
     // Send read command (0x03) and 24-bit address
     unsigned char cmd[4];
     cmd[0] = 0x03;  // Read command
@@ -281,95 +239,57 @@ static unsigned long k10_read_data_batch(unsigned long address, unsigned long Da
     cmd[2] = (unsigned char)((address) >> 8);
     cmd[3] = (unsigned char)address;
     
-    mp_printf(&mp_plat_print, "K10_SPI: Batch read command: 0x%02X 0x%02X 0x%02X 0x%02X\n", 
-              cmd[0], cmd[1], cmd[2], cmd[3]);
-    mp_hal_delay_ms(10);
-    
     spi_transaction_t trans = {
         .length = 4 * 8,  // 4 bytes in bits
         .tx_buffer = cmd,
         .rx_buffer = NULL,
     };
     
-    mp_printf(&mp_plat_print, "K10_SPI: Sending command transaction (length:%d bits)\n", trans.length);
-    mp_hal_delay_ms(10);
-    
     esp_err_t ret = spi_device_transmit(spi_device, &trans);
     if (ret != ESP_OK) {
-        mp_printf(&mp_plat_print, "K10_SPI: Batch read command failed: %s\n", esp_err_to_name(ret));
-        mp_hal_delay_ms(10);
         gpio_set_level(FONTCS, 1);  // CS high (inactive)
         xSemaphoreGive(spi_mutex);
         return 0;
     }
     
-    mp_printf(&mp_plat_print, "K10_SPI: Command transaction completed, checking CS state\n");
-    mp_hal_delay_ms(10);
-    
-    // Check CS pin state
-    int cs_level = gpio_get_level(FONTCS);
-    mp_printf(&mp_plat_print, "K10_SPI: CS pin level after command: %d\n", cs_level);
-    mp_hal_delay_ms(10);
-    
-    mp_printf(&mp_plat_print, "K10_SPI: Batch read command sent successfully\n");
-    mp_hal_delay_ms(10);
-    
     // Read data
     if (DataLen > 0) {
-        mp_printf(&mp_plat_print, "K10_SPI: Batch read receiving %lu bytes\n", DataLen);
-        mp_hal_delay_ms(10);
-        
         // Clear buffer before reading
         memset(pBuff, 0x00, DataLen);
-        mp_printf(&mp_plat_print, "K10_SPI: Buffer cleared before read\n");
-        mp_hal_delay_ms(10);
-        
         spi_transaction_t trans = {
             .length = DataLen * 8,  // Length in bits
             .tx_buffer = NULL,
             .rx_buffer = pBuff,
         };
         
-        mp_printf(&mp_plat_print, "K10_SPI: Sending data read transaction (length:%lu bits)\n", trans.length);
-        mp_hal_delay_ms(10);
-        
         ret = spi_device_transmit(spi_device, &trans);
         if (ret != ESP_OK) {
-            mp_printf(&mp_plat_print, "K10_SPI: Batch read data failed: %s\n", esp_err_to_name(ret));
-            mp_hal_delay_ms(10);
             gpio_set_level(FONTCS, 1);  // CS high (inactive)
             xSemaphoreGive(spi_mutex);
             return 0;
         }
-        
-        mp_printf(&mp_plat_print, "K10_SPI: Data read transaction completed\n");
-        mp_hal_delay_ms(10);
-        
         mp_printf(&mp_plat_print, "K10_SPI: Batch read data received: ");
         for (int i = 0; i < DataLen; i++) {  // Print first 16 bytes
             mp_printf(&mp_plat_print, "0x%02X ", pBuff[i]);
         }
-        if (DataLen > 16) {
-            mp_printf(&mp_plat_print, "...");
-        }
-        mp_printf(&mp_plat_print, "\n");
-        mp_hal_delay_ms(10);
     }
-    
     // CS low (inactive) - Arduino style
     gpio_set_level(FONTCS, 0);
-    mp_printf(&mp_plat_print, "K10_SPI: Batch read CS set to low (Arduino style)\n");
-    mp_hal_delay_ms(10);
-    
     xSemaphoreGive(spi_mutex);
-    mp_printf(&mp_plat_print, "K10_SPI: Batch read mutex released\n");
-    mp_hal_delay_ms(10);
-    
-    mp_printf(&mp_plat_print, "K10_SPI: Batch read completed, first byte: 0x%02X\n", pBuff[0]);
-    mp_hal_delay_ms(10);
     return pBuff[0];
 }
 
+// 已确认
+// Read data batch from font chip (public interface)
+unsigned long r_dat_bat(unsigned long address, unsigned long DataLen, unsigned char *pBuff) {
+    return k10_read_data_batch(address, DataLen, pBuff);
+}
+
+// SPI communication function (public interface)
+unsigned char gt_read_data(unsigned char* sendbuf, unsigned char sendlen, 
+                          unsigned char* receivebuf, unsigned int receivelen) {
+    return k10_spi_read_data(sendbuf, sendlen, receivebuf, receivelen);
+}
 /*-----------------
  *  FONT CHIP FUNCTIONS
  *----------------*/
@@ -393,6 +313,48 @@ int GT_Font_Init(void) {
 
 // Get ASCII character data from font chip
 unsigned char ASCII_GetData(unsigned char asc, unsigned long ascii_kind, unsigned char *DZ_Data) {
+#if 1
+    if ( asc <= 0x1Fu || asc > 0x7Eu )
+        return 0;
+    switch ( ascii_kind ){
+    case 1u:
+        r_dat_bat(8 * (asc + 259932), 8u, DZ_Data);
+    break;
+    case 2u:
+        r_dat_bat(8 * (asc + 260028), 8u, DZ_Data);
+        break;
+    case 3u:
+        r_dat_bat(12 * asc + 2080864, 0xCu, DZ_Data);
+        break;
+    case 4u:
+        r_dat_bat(26 * asc + 2090144 + 2, 0x18u, DZ_Data);
+        break;
+    case 5u:
+        r_dat_bat(16 * (asc + 130174), 0x10u, DZ_Data);
+        break;
+    case 6u:
+        r_dat_bat(48 * asc + 1543800, 0x30u, DZ_Data);
+        break;
+    case 7u:
+        r_dat_bat(48 * asc + 1549944, 0x30u, DZ_Data);
+        break;
+    case 8u:
+        r_dat_bat(((asc + 67108832) << 6) + 2084832, 0x40u, DZ_Data);
+        break;
+    case 9u:
+        r_dat_bat(34 * asc + 2092384 +2, 0x20u, DZ_Data);
+        break;
+    case 0xAu:
+        r_dat_bat(74 * asc + 1559864 + 2, 0x48u, DZ_Data);
+        break;
+    case 0xBu:
+        r_dat_bat(130 * asc + 2092576, 0x82u, DZ_Data);
+        break;
+    default:
+        return 1;
+    }
+return 1;
+#else 
     mp_printf(&mp_plat_print, "K10_FONT: ASCII_GetData called - char:%d (0x%02X), format:%lu\n", asc, asc, ascii_kind);
     mp_hal_delay_ms(10);
     
@@ -449,10 +411,55 @@ unsigned char ASCII_GetData(unsigned char asc, unsigned long ascii_kind, unsigne
     mp_printf(&mp_plat_print, "K10_FONT: ASCII_GetData failed (no valid data)\n");
     mp_hal_delay_ms(10);
     return 0;  // Failed
+#endif
 }
 
 // Get character interval/spacing (optional)
 unsigned char ASCII_GetInterval(unsigned char asc, unsigned long ascii_kind) {
+#if 1
+    unsigned char data[2];
+    if ( asc <= 0x1Fu || asc > 0x7Eu )
+        return 0;
+    switch ( ascii_kind )
+    {
+    case 1u:
+      r_dat_bat(8 * (asc + 259932), 2u, data);
+      break;
+    case 2u:
+      r_dat_bat(8 * (asc + 260028), 2u, data);
+      break;
+    case 3u:
+      r_dat_bat(12 * asc + 2080864, 2u, data);
+      break;
+    case 4u:
+      r_dat_bat(26 * asc + 2090144 , 2u, data);
+      break;
+    case 5u:
+      r_dat_bat(16 * (asc + 130174), 2u, data);
+      break;
+    case 6u:
+      r_dat_bat(48 * asc + 1543800, 2u, data);
+      break;
+    case 7u:
+      r_dat_bat(48 * asc + 1549944, 2u, data);
+      break;
+    case 8u:
+      r_dat_bat(((asc + 67108832) << 6) + 2084832, 2u, data);
+      break;
+    case 9u:
+      r_dat_bat(34 * asc + 2092384, 2u, data);
+      break;
+    case 0xAu:
+      r_dat_bat(74 * asc + 1559864 , 2u, data);
+      break;
+    case 0xBu:
+      r_dat_bat(130 * asc + 2092576, 2u, data);
+      break;
+    default:
+      break;
+    }
+    return data[1];
+#else 
     if (ascii_kind != ASCII_8X16) {
         return 0;
     }
@@ -476,10 +483,60 @@ unsigned char ASCII_GetInterval(unsigned char asc, unsigned long ascii_kind) {
     }
     
     return 1;  // Default spacing
+#endif
 }
 
 // Get GBK character data (for Chinese characters)
 unsigned long GBK_24_GetData(unsigned char c1, unsigned char c2, unsigned char *DZ_Data) {
+#if 1
+    unsigned char temp; 
+    int address;
+    
+    temp = c2;
+    address = 0;
+    if ( c2 == 127 )
+      address = 0;
+    if ( c1 <= 0xA0u || c1 > 0xA3u || c2 <= 0xA0u )
+    {
+      if ( c1 != 166 || c2 <= 0xA0u )
+      {
+        if ( c1 == 169 && c2 > 0xA0u )
+          address = 94 * c1 + c2 - 15671;
+      }
+      else
+      {
+        address = 94 * c1 + c2 - 15483;
+      }
+    }
+    else
+    {
+      address = 94 * c1 + c2 - 15295;
+    }
+    if ( c1 <= 0xAFu || c1 > 0xF7u || c2 <= 0xA0u )
+    {
+      if ( c1 > 0xA0u || c1 <= 0x80u || c2 <= 0x3Fu )
+      {
+        if ( c1 > 0xA9u && c2 <= 0xA0u )
+        {
+          if ( (c2 & 0x80u) != 0 )
+            temp = c2 - 1;
+          address = 96 * c1 + temp - 3081;
+        }
+      }
+      else
+      {
+        if ( (c2 & 0x80u) != 0 )
+          temp = c2 - 1;
+        address = 190 * c1 + temp - 17351;
+      }
+    }
+    else
+    {
+      address = 94 * c1 + c2 - 16250;
+    }
+    r_dat_bat(72 * address, 0x48u, DZ_Data);
+    return 72 * address;
+#else
     mp_printf(&mp_plat_print, "K10_FONT: GBK_24_GetData called - c1:0x%02X, c2:0x%02X\n", c1, c2);
     mp_hal_delay_ms(10);
     
@@ -556,13 +613,11 @@ unsigned long GBK_24_GetData(unsigned char c1, unsigned char c2, unsigned char *
     mp_printf(&mp_plat_print, "K10_FONT: GBK_24_GetData failed (no valid data)\n");
     mp_hal_delay_ms(10);
     return 0;  // Failed
+#endif
 }
 
 // Unicode to GBK conversion (from Arduino implementation)
 unsigned long U2G(unsigned int unicode) {
-    mp_printf(&mp_plat_print, "K10_FONT: U2G called for unicode: 0x%04X\n", unicode);
-    mp_hal_delay_ms(10);
-    
     unsigned char pBuff[2];
     int offset;
     unsigned int address = 0;
@@ -638,14 +693,47 @@ unsigned long U2G(unsigned int unicode) {
         mp_hal_delay_ms(10);
         return gbk_code;
     }
-    
-    mp_printf(&mp_plat_print, "K10_FONT: U2G conversion failed\n");
-    mp_hal_delay_ms(10);
     return 0;  // No conversion available
+}
+static int Uncompress(unsigned char* result, unsigned char *a2)
+{
+  for ( uint8_t i = 0; i <= 5u; ++i )
+  {
+    *(uint8_t *)(result + 4 * i) = a2[3 * i];
+    *(uint8_t *)(result + 4 * i + 1) = a2[3 * i + 1] & 0xF0;
+    *(uint8_t *)(result + 4 * i + 2) = a2[3 * i + 2];
+    *(uint8_t *)(result + 4 * i + 3) = 16 * a2[3 * i + 1];
+  }
+  return 1;
 }
 
 // Get 12x12 character data
 void gt_12_GetData(unsigned char MSB, unsigned char LSB, unsigned char *DZ_Data) {
+#if 1
+    unsigned char pBuff[20];
+    int offset;
+    unsigned int address = 0; // Initialize address to prevent uninitialized use
+    
+    offset = 2109216;
+      if ( MSB != 169 || LSB <= 0xA3u )
+      {
+        if ( MSB <= 0xA0u || MSB > 0xA3u || LSB <= 0xA0u )
+        {
+          if ( MSB > 0xAFu && MSB <= 0xF7u && LSB > 0xA0u )
+            address = 18 * (94 * MSB + LSB) + offset - 294246;
+        }
+        else
+        {
+          address = 18 * (94 * MSB + LSB) + offset - 275310;
+        }
+      }
+      else
+      {
+        address = 18 * LSB + offset + 2124;
+      }
+      r_dat_bat(address, 0x12u, pBuff);
+      Uncompress(DZ_Data, pBuff);
+#else
     // Initialize SPI if not already done
     if (!k10_spi_init()) {
         memset(DZ_Data, 0, 18);  // 12x12 pixels = 18 bytes
@@ -658,15 +746,6 @@ void gt_12_GetData(unsigned char MSB, unsigned char LSB, unsigned char *DZ_Data)
     
     // Read 18 bytes of data (12x12 pixels = 18 bytes for 1bpp)
     k10_read_data_batch(address, 18, DZ_Data);
+#endif
 }
 
-// Read data batch from font chip (public interface)
-unsigned long r_dat_bat(unsigned long address, unsigned long DataLen, unsigned char *pBuff) {
-    return k10_read_data_batch(address, DataLen, pBuff);
-}
-
-// SPI communication function (public interface)
-unsigned char gt_read_data(unsigned char* sendbuf, unsigned char sendlen, 
-                          unsigned char* receivebuf, unsigned int receivelen) {
-    return k10_spi_read_data(sendbuf, sendlen, receivebuf, receivelen);
-}

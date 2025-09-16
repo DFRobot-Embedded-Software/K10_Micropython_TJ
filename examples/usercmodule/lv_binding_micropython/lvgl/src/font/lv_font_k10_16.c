@@ -93,7 +93,14 @@ static bool k10_get_glyph_dsc(const lv_font_t * font, lv_font_glyph_dsc_t * dsc_
     
     // Set glyph descriptor based on character type
     dsc_out->resolved_font = font;       // Set the resolved font
-    
+    dsc_out->box_h = 12;   /* Height of the glyph bitmap (in pixels) */
+    dsc_out->box_w = 16;   /* Width of the glyph bitmap (in pixels) */
+    if(unicode_letter < 128){
+        dsc_out->adv_w = ASCII_GetInterval(unicode_letter,ASCII_12_A);   /* Letter spacing */
+      }else{
+        dsc_out->adv_w = 12;   
+      }
+    /*
     if (is_ascii) {
         // ASCII 8x16 format
         dsc_out->box_h = K10_ASCII_HEIGHT;   // Height of the glyph bitmap (in pixels)
@@ -105,9 +112,9 @@ static bool k10_get_glyph_dsc(const lv_font_t * font, lv_font_glyph_dsc_t * dsc_
         dsc_out->box_w = K10_CHINESE_WIDTH;  // Width of the glyph bitmap (in pixels)
         dsc_out->adv_w = 24;                 // Letter spacing (24 pixels for 24x24)
     }
-    
+    */
     dsc_out->ofs_x = 0;                  // X offset of the glyph bitmap (in pixels)
-    dsc_out->ofs_y = is_chinese ? 0 : 0; // Shift Chinese glyphs for top alignment (negative moves bitmap down relative to baseline)
+    dsc_out->ofs_y = 0; // Shift Chinese glyphs for top alignment (negative moves bitmap down relative to baseline)
     dsc_out->format = LV_FONT_GLYPH_FORMAT_A1;  // Original format is 1bpp
     dsc_out->is_placeholder = false;
     dsc_out->req_raw_bitmap = 0;         // We'll do the conversion ourselves
@@ -144,18 +151,17 @@ static const void * k10_get_glyph_bitmap(lv_font_glyph_dsc_t * g_dsc, lv_draw_bu
     
     if (is_ascii) {
         // Get ASCII character data
-        data_retrieved = ASCII_GetData((unsigned char)unicode_letter, ASCII_8X16, k10_font_buffer);
+        data_retrieved = ASCII_GetData((unsigned char)unicode_letter, ASCII_12_A, k10_font_buffer);
     } else if (is_chinese) {
         // Convert Unicode to GBK and get Chinese character data
         unsigned long gbk_code = U2G(unicode_letter);
         if (gbk_code != 0) {
             unsigned char c1 = (gbk_code >> 8) & 0xFF;
             unsigned char c2 = gbk_code & 0xFF;
-            data_retrieved = (GBK_24_GetData(c1, c2, k10_font_buffer) != 0);
+            gt_12_GetData(c1, c2, k10_font_buffer);
         }
     }
     
-    if (data_retrieved) {
         // Use the generic conversion function from fmt_txt
         if (draw_buf && draw_buf->data) {
             const uint8_t * bitmap_in = k10_font_buffer;
@@ -169,7 +175,7 @@ static const void * k10_get_glyph_bitmap(lv_font_glyph_dsc_t * g_dsc, lv_draw_bu
         } else {
             return NULL;
         }
-    }
+
     
     return NULL;
 }
