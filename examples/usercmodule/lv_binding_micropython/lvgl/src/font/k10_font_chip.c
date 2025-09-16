@@ -346,7 +346,7 @@ static unsigned long k10_read_data_batch(unsigned long address, unsigned long Da
         mp_hal_delay_ms(10);
         
         mp_printf(&mp_plat_print, "K10_SPI: Batch read data received: ");
-        for (int i = 0; i < DataLen && i < 16; i++) {  // Print first 16 bytes
+        for (int i = 0; i < DataLen; i++) {  // Print first 16 bytes
             mp_printf(&mp_plat_print, "0x%02X ", pBuff[i]);
         }
         if (DataLen > 16) {
@@ -480,43 +480,167 @@ unsigned char ASCII_GetInterval(unsigned char asc, unsigned long ascii_kind) {
 
 // Get GBK character data (for Chinese characters)
 unsigned long GBK_24_GetData(unsigned char c1, unsigned char c2, unsigned char *DZ_Data) {
+    mp_printf(&mp_plat_print, "K10_FONT: GBK_24_GetData called - c1:0x%02X, c2:0x%02X\n", c1, c2);
+    mp_hal_delay_ms(10);
+    
     // Initialize SPI if not already done
     if (!k10_spi_init()) {
+        mp_printf(&mp_plat_print, "K10_FONT: SPI initialization failed for GBK\n");
+        mp_hal_delay_ms(10);
         return 0;
     }
     
-    // Calculate address based on GBK encoding
-    // This is a simplified version - you may need to adjust based on actual font chip layout
+    // Calculate address based on GBK encoding (from Arduino implementation)
+    unsigned char temp = c2;
     unsigned long address = 0;
     
-    // Basic GBK address calculation (simplified)
-    if (c1 >= 0xA1 && c1 <= 0xFE && c2 >= 0xA1 && c2 <= 0xFE) {
-        address = 72 * ((c1 - 0xA1) * 94 + (c2 - 0xA1));
+    mp_printf(&mp_plat_print, "K10_FONT: Calculating GBK address for c1:0x%02X, c2:0x%02X\n", c1, c2);
+    mp_hal_delay_ms(10);
+    
+    // Complex GBK address calculation (from Arduino code)
+    if (c2 == 127) {
+        address = 0;
+    } else if (c1 <= 0xA0 || c1 > 0xA3 || c2 <= 0xA0) {
+        if (c1 != 166 || c2 <= 0xA0) {
+            if (c1 == 169 && c2 > 0xA0) {
+                address = 94 * c1 + c2 - 15671;
+            }
+        } else {
+            address = 94 * c1 + c2 - 15483;
+        }
     } else {
-        return 0;  // Invalid GBK range
+        address = 94 * c1 + c2 - 15295;
     }
+    
+    if (c1 <= 0xAF || c1 > 0xF7 || c2 <= 0xA0) {
+        if (c1 > 0xA0 || c1 <= 0x80 || c2 <= 0x3F) {
+            if (c1 > 0xA9 && c2 <= 0xA0) {
+                if ((c2 & 0x80) != 0) {
+                    temp = c2 - 1;
+                }
+                address = 96 * c1 + temp - 3081;
+            }
+        } else {
+            if ((c2 & 0x80) != 0) {
+                temp = c2 - 1;
+            }
+            address = 190 * c1 + temp - 17351;
+        }
+    } else {
+        address = 94 * c1 + c2 - 16250;
+    }
+    
+    mp_printf(&mp_plat_print, "K10_FONT: Calculated GBK address: 0x%06lX\n", address);
+    mp_hal_delay_ms(10);
     
     // Read 72 bytes of data (12x24 pixels = 72 bytes for 1bpp)
-    if (k10_read_data_batch(address, 72, DZ_Data)) {
-        return address;  // Return the address used
+    unsigned long result = k10_read_data_batch(72 * address, 72, DZ_Data);
+    mp_printf(&mp_plat_print, "K10_FONT: GBK read returned: 0x%02lX\n", result);
+    mp_hal_delay_ms(10);
+    
+    // Check if we got valid data
+    bool has_valid_data = false;
+    for (int i = 0; i < 72; i++) {
+        if (DZ_Data[i] != 0xFF && DZ_Data[i] != 0x00) {
+            has_valid_data = true;
+            break;
+        }
     }
     
+    if (has_valid_data) {
+        mp_printf(&mp_plat_print, "K10_FONT: GBK_24_GetData completed successfully\n");
+        mp_hal_delay_ms(10);
+        return 72 * address;  // Return the address used
+    }
+    
+    mp_printf(&mp_plat_print, "K10_FONT: GBK_24_GetData failed (no valid data)\n");
+    mp_hal_delay_ms(10);
     return 0;  // Failed
 }
 
-// Unicode to GBK conversion (simplified)
+// Unicode to GBK conversion (from Arduino implementation)
 unsigned long U2G(unsigned int unicode) {
-    // This is a simplified conversion - you may need a complete Unicode to GBK table
-    // For now, return a basic conversion for common Chinese characters
+    mp_printf(&mp_plat_print, "K10_FONT: U2G called for unicode: 0x%04X\n", unicode);
+    mp_hal_delay_ms(10);
     
-    if (unicode >= 0x4E00 && unicode <= 0x9FFF) {
-        // CJK Unified Ideographs range
-        // Basic conversion (this is not complete)
-        unsigned char c1 = 0xA1 + ((unicode - 0x4E00) / 94);
-        unsigned char c2 = 0xA1 + ((unicode - 0x4E00) % 94);
-        return (c1 << 8) | c2;
+    unsigned char pBuff[2];
+    int offset;
+    unsigned int address = 0;
+    
+    offset = 2517590;
+    
+    // Complex Unicode to GBK conversion (from Arduino code)
+    if (unicode > 0x451 || unicode <= 0x9F) {
+        if (unicode > 0x2642 || unicode <= 0x200F) {
+            if (unicode > 0x33D5 || unicode < 0x3000) {
+                if (unicode > 0x9FA5 || unicode < 0x4E00) {
+                    if (unicode > 0xFE6B || unicode <= 0xFE2F) {
+                        if (unicode > 0xFF5E || unicode <= 0xFF00) {
+                            if (unicode > 0xFFE5 || unicode <= 0xFFDF) {
+                                if (unicode > 0xFA29 || unicode <= 0xF92B) {
+                                    if (unicode > 0xE864 || unicode <= 0xE815) {
+                                        if (unicode > 0x2ECA || unicode <= 0x2E80) {
+                                            if (unicode > 0x49B7 || unicode <= 0x4946) {
+                                                if (unicode > 0x4DAE || unicode <= 0x4C76) {
+                                                    if (unicode > 0x3CE0 || unicode <= 0x3446) {
+                                                        if (unicode <= 0x478D && unicode > 0x4054) {
+                                                            address = 2 * (unicode + 2147467178) + 55380;
+                                                        }
+                                                    } else {
+                                                        address = 2 * (unicode + 2147470265) + 50976;
+                                                    }
+                                                } else {
+                                                    address = 2 * (unicode + 2147464073) + 50352;
+                                                }
+                                            } else {
+                                                address = 2 * (unicode + 2147464889) + 50126;
+                                            }
+                                        } else {
+                                            address = 2 * (unicode + 2147471743) + 49978;
+                                        }
+                                    } else {
+                                        address = 2 * (unicode + 2147424234) + 49820;
+                                    }
+                                } else {
+                                    address = 2 * (unicode + 2147419860) + 49312;
+                                }
+                            } else {
+                                address = 2 * (unicode + 2147418144) + 49142;
+                            }
+                        } else {
+                            address = 2 * (unicode + 2147418367) + 48954;
+                        }
+                    } else {
+                        address = 2 * (unicode + 2147418576) + 48834;
+                    }
+                } else {
+                    address = 2 * (unicode + 2147463680) + 7030;
+                }
+            } else {
+                address = 2 * (unicode + 2147471360) + 5066;
+            }
+        } else {
+            address = 2 * (unicode + 2147475440) + 1892;
+        }
+    } else {
+        address = 2 * (unicode + 2147483488);
     }
     
+    address += offset;
+    
+    mp_printf(&mp_plat_print, "K10_FONT: U2G calculated address: 0x%06X\n", address);
+    mp_hal_delay_ms(10);
+    
+    // Read GBK code from font chip
+    if (k10_read_data_batch(address, 2, pBuff)) {
+        unsigned long gbk_code = (pBuff[0] << 8) | pBuff[1];
+        mp_printf(&mp_plat_print, "K10_FONT: U2G conversion result: 0x%04lX\n", gbk_code);
+        mp_hal_delay_ms(10);
+        return gbk_code;
+    }
+    
+    mp_printf(&mp_plat_print, "K10_FONT: U2G conversion failed\n");
+    mp_hal_delay_ms(10);
     return 0;  // No conversion available
 }
 

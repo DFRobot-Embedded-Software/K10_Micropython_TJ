@@ -33,10 +33,10 @@
 #define K10_ASCII_HEIGHT       16
 #define K10_ASCII_BYTES        ((K10_ASCII_WIDTH * K10_ASCII_HEIGHT) / 8)  // 16 bytes
 
-// Font dimensions for Chinese characters (12x24)
-#define K10_CHINESE_WIDTH      12
+// Font dimensions for Chinese characters (24x24)
+#define K10_CHINESE_WIDTH      24
 #define K10_CHINESE_HEIGHT     24
-#define K10_CHINESE_BYTES      ((K10_CHINESE_WIDTH * K10_CHINESE_HEIGHT) / 8)  // 36 bytes
+#define K10_CHINESE_BYTES      ((K10_CHINESE_WIDTH * K10_CHINESE_HEIGHT) / 8)  // 72 bytes
 
 #define K10_FONT_BPP           1
 
@@ -68,8 +68,8 @@ static int k10_font_init(void) {
  *  DYNAMIC FONT CALLBACKS
  *----------------*/
 
-// Buffer for dynamic font data (1bpp from chip)
-static uint8_t k10_font_buffer[K10_ASCII_BYTES];
+// Buffer for dynamic font data (1bpp from chip) - use larger size for Chinese characters
+static uint8_t k10_font_buffer[K10_CHINESE_BYTES];  // 72 bytes for 24x24 Chinese characters
 
 // Dynamic glyph descriptor callback
 static bool k10_get_glyph_dsc(const lv_font_t * font, lv_font_glyph_dsc_t * dsc_out, uint32_t unicode_letter, uint32_t unicode_letter_next) {
@@ -83,18 +83,31 @@ static bool k10_get_glyph_dsc(const lv_font_t * font, lv_font_glyph_dsc_t * dsc_
         return false;
     }
     
-    // Check if it's a printable ASCII character
-    if (unicode_letter < 32 || unicode_letter > 126) {
+    // Check if it's a printable ASCII character or Chinese character
+    bool is_ascii = (unicode_letter >= 32 && unicode_letter <= 126);
+    bool is_chinese = (unicode_letter >= 0x4E00 && unicode_letter <= 0x9FFF);  // CJK Unified Ideographs
+    
+    if (!is_ascii && !is_chinese) {
         return false;  // Character not supported
     }
     
-    // Set glyph descriptor for ASCII 8x16 format
+    // Set glyph descriptor based on character type
     dsc_out->resolved_font = font;       // Set the resolved font
-    dsc_out->box_h = K10_ASCII_HEIGHT;   // Height of the glyph bitmap (in pixels)
-    dsc_out->box_w = K10_ASCII_WIDTH;    // Width of the glyph bitmap (in pixels)
-    dsc_out->adv_w = 8;                  // Letter spacing (8 pixels for 8x16)
+    
+    if (is_ascii) {
+        // ASCII 8x16 format
+        dsc_out->box_h = K10_ASCII_HEIGHT;   // Height of the glyph bitmap (in pixels)
+        dsc_out->box_w = K10_ASCII_WIDTH;    // Width of the glyph bitmap (in pixels)
+        dsc_out->adv_w = 8;                  // Letter spacing (8 pixels for 8x16)
+    } else {
+        // Chinese 24x24 format
+        dsc_out->box_h = K10_CHINESE_HEIGHT; // Height of the glyph bitmap (in pixels)
+        dsc_out->box_w = K10_CHINESE_WIDTH;  // Width of the glyph bitmap (in pixels)
+        dsc_out->adv_w = 24;                 // Letter spacing (24 pixels for 24x24)
+    }
+    
     dsc_out->ofs_x = 0;                  // X offset of the glyph bitmap (in pixels)
-    dsc_out->ofs_y = 0;                  // Y offset of the glyph bitmap (in pixels), relative to the baseline
+    dsc_out->ofs_y = is_chinese ? 0 : 0; // Shift Chinese glyphs for top alignment (negative moves bitmap down relative to baseline)
     dsc_out->format = LV_FONT_GLYPH_FORMAT_A1;  // Original format is 1bpp
     dsc_out->is_placeholder = false;
     dsc_out->req_raw_bitmap = 0;         // We'll do the conversion ourselves
@@ -114,7 +127,10 @@ static const void * k10_get_glyph_bitmap(lv_font_glyph_dsc_t * g_dsc, lv_draw_bu
     uint32_t unicode_letter = g_dsc->gid.index;
     
     // Check if unicode_letter is valid
-    if (unicode_letter < 32 || unicode_letter > 126) {
+    bool is_ascii = (unicode_letter >= 32 && unicode_letter <= 126);
+    bool is_chinese = (unicode_letter >= 0x4E00 && unicode_letter <= 0x9FFF);  // CJK Unified Ideographs
+    
+    if (!is_ascii && !is_chinese) {
         return NULL;
     }
     
@@ -123,8 +139,23 @@ static const void * k10_get_glyph_bitmap(lv_font_glyph_dsc_t * g_dsc, lv_draw_bu
         return NULL;
     }
     
-    // Get font data from K10 chip
-    if (ASCII_GetData((unsigned char)unicode_letter, ASCII_8X16, k10_font_buffer)) {
+    // Get font data from K10 chip based on character type
+    bool data_retrieved = false;
+    
+    if (is_ascii) {
+        // Get ASCII character data
+        data_retrieved = ASCII_GetData((unsigned char)unicode_letter, ASCII_8X16, k10_font_buffer);
+    } else if (is_chinese) {
+        // Convert Unicode to GBK and get Chinese character data
+        unsigned long gbk_code = U2G(unicode_letter);
+        if (gbk_code != 0) {
+            unsigned char c1 = (gbk_code >> 8) & 0xFF;
+            unsigned char c2 = gbk_code & 0xFF;
+            data_retrieved = (GBK_24_GetData(c1, c2, k10_font_buffer) != 0);
+        }
+    }
+    
+    if (data_retrieved) {
         // Use the generic conversion function from fmt_txt
         if (draw_buf && draw_buf->data) {
             const uint8_t * bitmap_in = k10_font_buffer;
@@ -150,8 +181,8 @@ static const void * k10_get_glyph_bitmap(lv_font_glyph_dsc_t * g_dsc, lv_draw_bu
 const lv_font_t lv_font_k10_16 = {
     .get_glyph_dsc = k10_get_glyph_dsc,      // Use dynamic callback function
     .get_glyph_bitmap = k10_get_glyph_bitmap, // Use dynamic callback function
-    .line_height = K10_ASCII_HEIGHT + 2,     // Use ASCII character height for line spacing
-    .base_line = 2,
+    .line_height = K10_CHINESE_HEIGHT,       // Set line height to exact glyph height
+    .base_line = 0,
 #if !(LVGL_VERSION_MAJOR == 6 && LVGL_VERSION_MINOR == 0)
     .subpx = LV_FONT_SUBPX_NONE,
 #endif

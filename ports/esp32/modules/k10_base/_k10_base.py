@@ -1032,8 +1032,7 @@ class Screen(object):
         elif font_size == 12:
             self.desc.font = lv.font_montserrat_12
         else:
-            self.desc.font = lv.font_k10_test_16
-            font_size = 16
+            self.desc.font = lv.font_k10_16
 
         #按坐标显示
         if line == None:
