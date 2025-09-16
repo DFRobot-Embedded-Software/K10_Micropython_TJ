@@ -430,6 +430,7 @@ extern void mp_lv_deinit_gc();
 
 /*K10 custom fonts*/
 #define LV_FONT_K10_16 1
+#define LV_FONT_K10_24 1
 #define LV_FONT_K10_TEST_16 1
 #define LV_FONT_MONTSERRAT_20 0
 #define LV_FONT_MONTSERRAT_22 0

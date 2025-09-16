@@ -1027,6 +1027,8 @@ class Screen(object):
         self.desc.text = text
         if font_size == 16:
             self.desc.font = lv.font_k10_16
+        elif font_size == 24:
+            self.desc.font = lv.font_k10_24
         elif font_size == 14:
             self.desc.font = lv.font_montserrat_14
         elif font_size == 12:

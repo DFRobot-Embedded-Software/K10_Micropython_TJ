@@ -13,6 +13,9 @@
 #ifndef LV_FONT_K10_16
     #define LV_FONT_K10_16 1
 #endif
+#ifndef LV_FONT_K10_24
+    #define LV_FONT_K10_24 1
+#endif
 
 #if LV_FONT_K10_16
 
@@ -100,19 +103,6 @@ static bool k10_get_glyph_dsc(const lv_font_t * font, lv_font_glyph_dsc_t * dsc_
       }else{
         dsc_out->adv_w = 12;   
       }
-    /*
-    if (is_ascii) {
-        // ASCII 8x16 format
-        dsc_out->box_h = K10_ASCII_HEIGHT;   // Height of the glyph bitmap (in pixels)
-        dsc_out->box_w = K10_ASCII_WIDTH;    // Width of the glyph bitmap (in pixels)
-        dsc_out->adv_w = 8;                  // Letter spacing (8 pixels for 8x16)
-    } else {
-        // Chinese 24x24 format
-        dsc_out->box_h = K10_CHINESE_HEIGHT; // Height of the glyph bitmap (in pixels)
-        dsc_out->box_w = K10_CHINESE_WIDTH;  // Width of the glyph bitmap (in pixels)
-        dsc_out->adv_w = 24;                 // Letter spacing (24 pixels for 24x24)
-    }
-    */
     dsc_out->ofs_x = 0;                  // X offset of the glyph bitmap (in pixels)
     dsc_out->ofs_y = 0; // Shift Chinese glyphs for top alignment (negative moves bitmap down relative to baseline)
     dsc_out->format = LV_FONT_GLYPH_FORMAT_A1;  // Original format is 1bpp
@@ -180,6 +170,101 @@ static const void * k10_get_glyph_bitmap(lv_font_glyph_dsc_t * g_dsc, lv_draw_bu
     return NULL;
 }
 
+static bool k10_get_glyph_dsc_24(const lv_font_t * font, lv_font_glyph_dsc_t * dsc_out, uint32_t unicode_letter, uint32_t unicode_letter_next) {
+    // Safety check
+    if (!font || !dsc_out) {
+        return false;
+    }
+    
+    // Initialize font chip if needed
+    if (!k10_font_init()) {
+        return false;
+    }
+    
+    // Check if it's a printable ASCII character or Chinese character
+    bool is_ascii = (unicode_letter >= 32 && unicode_letter <= 126);
+    bool is_chinese = (unicode_letter >= 0x4E00 && unicode_letter <= 0x9FFF);  // CJK Unified Ideographs
+    
+    if (!is_ascii && !is_chinese) {
+        return false;  // Character not supported
+    }
+    
+    // Set glyph descriptor based on character type
+    dsc_out->resolved_font = font;       // Set the resolved font
+    dsc_out->box_h = 24;   /* Height of the glyph bitmap (in pixels) */
+    dsc_out->box_w = 24;   /* Width of the glyph bitmap (in pixels) */
+    if(unicode_letter < 128){
+        dsc_out->adv_w = ASCII_GetInterval(unicode_letter,ASCII_24_B);   /* Letter spacing */
+      }else{
+        dsc_out->adv_w = 24;   
+      }
+    dsc_out->ofs_x = 0;                  // X offset of the glyph bitmap (in pixels)
+    dsc_out->ofs_y = 0; // Shift Chinese glyphs for top alignment (negative moves bitmap down relative to baseline)
+    dsc_out->format = LV_FONT_GLYPH_FORMAT_A1;  // Original format is 1bpp
+    dsc_out->is_placeholder = false;
+    dsc_out->req_raw_bitmap = 0;         // We'll do the conversion ourselves
+    dsc_out->gid.index = unicode_letter; // Store the unicode character as glyph ID
+    dsc_out->entry = NULL;               // No cache entry for dynamic fonts
+    
+    return true;  // Character found
+}
+
+// Dynamic glyph bitmap callback
+static const void * k10_get_glyph_bitmap_24(lv_font_glyph_dsc_t * g_dsc, lv_draw_buf_t * draw_buf) {
+    // Safety check
+    if (!g_dsc) {
+        return NULL;
+    }
+    
+    uint32_t unicode_letter = g_dsc->gid.index;
+    
+    // Check if unicode_letter is valid
+    bool is_ascii = (unicode_letter >= 32 && unicode_letter <= 126);
+    bool is_chinese = (unicode_letter >= 0x4E00 && unicode_letter <= 0x9FFF);  // CJK Unified Ideographs
+    
+    if (!is_ascii && !is_chinese) {
+        return NULL;
+    }
+    
+    // Initialize font chip if needed
+    if (!k10_font_init()) {
+        return NULL;
+    }
+    
+    // Get font data from K10 chip based on character type
+    bool data_retrieved = false;
+    
+    if (is_ascii) {
+        // Get ASCII character data
+        data_retrieved = ASCII_GetData((unsigned char)unicode_letter, ASCII_24_B, k10_font_buffer);
+    } else if (is_chinese) {
+        // Convert Unicode to GBK and get Chinese character data
+        unsigned long gbk_code = U2G(unicode_letter);
+        if (gbk_code != 0) {
+            unsigned char c1 = (gbk_code >> 8) & 0xFF;
+            unsigned char c2 = gbk_code & 0xFF;
+            GBK_24_GetData(c1, c2, k10_font_buffer);
+        }
+    }
+    
+        // Use the generic conversion function from fmt_txt
+        if (draw_buf && draw_buf->data) {
+            const uint8_t * bitmap_in = k10_font_buffer;
+            uint8_t * bitmap_out = (uint8_t *)draw_buf->data;
+            bool byte_aligned = false;  // We use non-aligned format like static fonts
+            
+            // Use the generic 1bpp to A8 conversion function
+            lv_font_convert_bitmap_1bpp_to_a8(bitmap_in, bitmap_out, g_dsc->box_w, g_dsc->box_h, byte_aligned);
+            
+            return draw_buf;
+        } else {
+            return NULL;
+        }
+
+    
+    return NULL;
+}
+
 /*-----------------
  *  PUBLIC FONT
  *----------------*/
@@ -187,7 +272,24 @@ static const void * k10_get_glyph_bitmap(lv_font_glyph_dsc_t * g_dsc, lv_draw_bu
 const lv_font_t lv_font_k10_16 = {
     .get_glyph_dsc = k10_get_glyph_dsc,      // Use dynamic callback function
     .get_glyph_bitmap = k10_get_glyph_bitmap, // Use dynamic callback function
-    .line_height = K10_CHINESE_HEIGHT,       // Set line height to exact glyph height
+    .line_height = K10_ASCII_HEIGHT,       // Set line height to exact glyph height
+    .base_line = 0,
+#if !(LVGL_VERSION_MAJOR == 6 && LVGL_VERSION_MINOR == 0)
+    .subpx = LV_FONT_SUBPX_NONE,
+#endif
+#if LV_VERSION_CHECK(7, 4, 0) || LVGL_VERSION_MAJOR >= 8
+    .underline_position = -1,
+    .underline_thickness = 1,
+#endif
+    .dsc = NULL,  // No static descriptor needed for dynamic fonts
+    .fallback = NULL
+};
+
+
+const lv_font_t lv_font_k10_24 = {
+    .get_glyph_dsc = k10_get_glyph_dsc_24,      // Use dynamic callback function
+    .get_glyph_bitmap = k10_get_glyph_bitmap_24, // Use dynamic callback function
+    .line_height = 24,       // Set line height to exact glyph height
     .base_line = 0,
 #if !(LVGL_VERSION_MAJOR == 6 && LVGL_VERSION_MINOR == 0)
     .subpx = LV_FONT_SUBPX_NONE,
