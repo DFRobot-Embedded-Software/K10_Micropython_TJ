@@ -260,9 +260,16 @@ class accelerometer(object):
 k10的板载2812灯的控制类(灯的定义顺序是反的)
 '''
 class rgb_board():
+    '''
     def __init__(self,pin=None):
         self.my_rgb = NeoPixel(Pin(46, Pin.OUT), n=10, bpp=3, timing=1)
         self.bright = 9
+    '''
+    def __init__(self,pin=46,number=10):
+        self.my_rgb = NeoPixel(Pin(pin, Pin.OUT), n=number, bpp=3, timing=1)
+        self.bright = 9
+        self._number = number
+        self.clear()
 
     def write(self,num=-1,R=0,G=0,B=0,color=None):
         #如果传入了color，则听color的
@@ -291,6 +298,129 @@ class rgb_board():
         if bright <= 9 and bright >= 0:
             self.bright = bright
             
+    def get_brightness(self, level):
+        """
+        根据段号（0到9）返回对应的亮度值（0到255）
+        :param level: 段号（0到9）
+        :return: 亮度值（0到255）
+        """
+        if level < 0 or level > 9:
+            raise ValueError("段号必须在0到9之间")
+        # 亮度分段：0, 28, 56, 85, 113, 141, 170, 198, 226, 255
+        brightness_levels = [0, 28, 56, 85, 113, 141, 170, 198, 226, 255]
+        return brightness_levels[level]
+
+    def hsv_to_rgb(self, h, s, v):
+        """将HSV颜色空间转换为RGB颜色空间"""
+        if s == 0.0:
+            return (v, v, v)
+        i = int(h * 6.0)
+        f = (h * 6.0) - i
+        p = v * (1.0 - s)
+        q = v * (1.0 - s * f)
+        t = v * (1.0 - s * (1.0 - f))
+        i = i % 6
+        if i == 0:
+            return (v, t, p)
+        if i == 1:
+            return (q, v, p)
+        if i == 2:
+            return (p, v, t)
+        if i == 3:
+            return (p, q, v)
+        if i == 4:
+            return (t, p, v)
+        if i == 5:
+            return (v, p, q)
+    
+    def rainbow_cycle(self, start_led=0, end_led=None, hue_start=0, hue_end=360):
+        """
+        在NeoPixel灯带上生成彩虹色效果，支持配置显示的灯号和颜色范围
+        :param np: NeoPixel对象
+        :param wait: 每次颜色变化后的延迟时间（秒）
+        :param start_led: 起始LED索引（包含）
+        :param end_led: 结束LED索引（不包含），如果为None，则使用所有LED
+        :param hue_start: 起始色相值（1到360）
+        :param hue_end: 结束色相值（1到360）
+        """
+        end_led += 1
+        if end_led is None:
+            end_led = len(self.my_rgb)
+        num_leds = end_led - start_led
+
+        # 将色相值从1-360映射到0-1
+        hue_start_norm = hue_start / 360.0
+        hue_end_norm = hue_end / 360.0
+        brightness = self.get_brightness(self.bright) / 255.0 
+        
+        for i in range(start_led, end_led):
+            # 计算当前LED的色相值
+            hue = hue_start_norm + (i - start_led) / num_leds * (hue_end_norm - hue_start_norm) 
+            hue = hue - int(hue)  # 确保hue在0-1之间
+            rgb = self.hsv_to_rgb(hue, 1.0, brightness)
+            # 将RGB值从0-1范围转换为0-255范围
+            self.my_rgb[i] = tuple(int(c * 255) for c in rgb)
+        self.my_rgb.write()
+        time.sleep(0.001)
+
+    def shift(self, shift):
+        """
+        让灯带上的像素整体向前移动一定步长。
+
+        :param np: NeoPixel对象
+        :param step: 移动的步长（默认为1个像素）
+        """
+        num_leds = len(self.my_rgb)
+
+        # 复制当前像素颜色
+        prev_colors = [self.my_rgb[i] for i in range(num_leds)]
+
+        # 移动像素
+        for i in range(num_leds):
+            src_index = i - shift
+            if src_index >= 0:
+                self.my_rgb[i] = prev_colors[src_index]
+            else:
+                self.my_rgb[i] = (0, 0, 0)  # 移出范围的像素熄灭
+
+        self.my_rgb.write()
+
+    def interpolate_color(self,ratio):
+        """
+        计算蓝色到红色的渐变颜色。
+        :param ratio: 颜色插值比例（0.0 - 1.0）
+        :return: (R, G, B) 颜色元组
+        """
+        #brightness = self.get_brightness(self.bright) / 255.0 
+        r = int(255/(10-self.bright) * ratio)
+        g = 0
+        b = int(255/(10-self.bright) * (1 - ratio))
+        return (r, g, b)
+
+    def bargraph(self, start_led, end_led, color_level, max_level):
+        """
+        在指定范围的RGB灯上绘制蓝色到红色渐变的条形图。
+
+        :param start_led: 起始灯号
+        :param end_led: 结束灯号
+        :param color_level: 需要点亮的灯数量（0到max_level）
+        :param max_level: 最高亮灯数量（用于映射color_level到灯号范围）
+        """
+        num_leds = end_led - start_led + 1
+
+        # 将color_level映射到灯带范围
+        mapped_leds = int((color_level / max_level) * num_leds)
+        mapped_leds = min(mapped_leds, num_leds)  # 确保不会超出范围
+
+        for i in range(start_led, end_led + 1):
+            ratio = (i - start_led) / num_leds  # 计算渐变比例
+            color = self.interpolate_color(ratio)
+            if i < start_led + mapped_leds:
+                 self.my_rgb[i] = color
+            else:
+                 self.my_rgb[i] = (0, 0, 0)  # 关闭LED
+
+        self.my_rgb.write()
         
     def clear(self):
         self.my_rgb.fill((0,0,0))
@@ -558,9 +688,9 @@ mic = Mic()
 speaker = Speaker()
 tf_card = TF_card()
 screen = Screen()
-camera = Camera()
-wifi = WiFi()
-mqttclient = MqttClient()
+#camera = Camera()
+#wifi = WiFi()
+#mqttclient = MqttClient()
 acce = accelerometer()
 rgb = rgb_board()
 

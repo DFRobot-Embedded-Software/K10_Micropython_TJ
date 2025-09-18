@@ -27,9 +27,22 @@ extern void init_ai(void);
 extern void cat_detect_task(void* arg);
 extern void code_scanner_task(void* arg);
 extern void move_detect_task(void* arg);
+extern QueueHandle_t camera_queue;
 
 static mp_obj_t g_ai_callback = mp_const_none;
 static QueueHandle_t result_queue = NULL;
+static TaskHandle_t ai_callback_task_handle = NULL;
+static TaskHandle_t face_recognize_task_handle = NULL;
+static TaskHandle_t camera_start_task_handle = NULL;
+static TaskHandle_t cat_detect_task_handle = NULL;
+static TaskHandle_t code_scanner_task_handle = NULL;
+static TaskHandle_t move_detect_task_handle = NULL;
+static QueueHandle_t camera_output_queue = NULL;
+static ai_data_obj_t g_latest_ai_data;
+static bool g_ai_data_updated = false;
+static int init_ai_flag = 0;
+int free_camera_flag = 0;
+int free_ai_flag = 0;
 
 // 设置回调
 static mp_obj_t mp_set_ai_callback(mp_obj_t callback) {
@@ -50,77 +63,34 @@ void ai_push_result(ai_data_obj_t *data) {
     }
 }
 
+void camera_push_result(camera_fb_t *data) {
+    if (camera_output_queue) {
+        xQueueSend(camera_output_queue, &data, 0); // 传递指针，立即返回，满了就丢弃最新数据
+    }
+}
+
 // 专门的队列消费任务
 static void ai_callback_task(void* arg) {
     ai_data_obj_t data;
     while (1) {
+        if (free_ai_flag == 1) {
+            break;
+        }
         if (xQueueReceive(result_queue, &data, portMAX_DELAY)) {
+            // 更新全局数据
+            g_latest_ai_data = data;
+            g_ai_data_updated = true;
+            
             if (g_ai_callback != mp_const_none) {
-                mp_sched_schedule(
-                    g_ai_callback,
-                    mp_obj_new_int(data.face_detect.face_id)
-                );
-                // // 创建包含所有数据的字典
-                // mp_obj_t result_dict = mp_obj_new_dict(0);
-                
-                // // 添加人脸检测数据
-                // if (data.face_flag) {
-                //     mp_obj_t face_dict = mp_obj_new_dict(0);
-                //     mp_obj_dict_store(face_dict, MP_OBJ_NEW_QSTR(MP_QSTR_face_id), mp_obj_new_int(data.face_detect.face_id));
-                //     mp_obj_dict_store(face_dict, MP_OBJ_NEW_QSTR(MP_QSTR_frame_length), mp_obj_new_int(data.face_detect.face_frame_length));
-                //     mp_obj_dict_store(face_dict, MP_OBJ_NEW_QSTR(MP_QSTR_frame_width), mp_obj_new_int(data.face_detect.face_frame_width));
-                    
-                //     // 添加面部特征点坐标
-                //     mp_obj_t left_eye = mp_obj_new_tuple(2, (mp_obj_t[]){mp_obj_new_int(data.face_detect.face_left_eys[0]), mp_obj_new_int(data.face_detect.face_left_eys[1])});
-                //     mp_obj_t right_eye = mp_obj_new_tuple(2, (mp_obj_t[]){mp_obj_new_int(data.face_detect.face_right_eys[0]), mp_obj_new_int(data.face_detect.face_right_eys[1])});
-                //     mp_obj_t nose = mp_obj_new_tuple(2, (mp_obj_t[]){mp_obj_new_int(data.face_detect.face_nose[0]), mp_obj_new_int(data.face_detect.face_nose[1])});
-                //     mp_obj_t left_mouth = mp_obj_new_tuple(2, (mp_obj_t[]){mp_obj_new_int(data.face_detect.face_left_mouth[0]), mp_obj_new_int(data.face_detect.face_left_mouth[1])});
-                //     mp_obj_t right_mouth = mp_obj_new_tuple(2, (mp_obj_t[]){mp_obj_new_int(data.face_detect.face_right_mouth[0]), mp_obj_new_int(data.face_detect.face_right_mouth[1])});
-                    
-                //     mp_obj_dict_store(face_dict, MP_OBJ_NEW_QSTR(MP_QSTR_left_eye), left_eye);
-                //     mp_obj_dict_store(face_dict, MP_OBJ_NEW_QSTR(MP_QSTR_right_eye), right_eye);
-                //     mp_obj_dict_store(face_dict, MP_OBJ_NEW_QSTR(MP_QSTR_nose), nose);
-                //     mp_obj_dict_store(face_dict, MP_OBJ_NEW_QSTR(MP_QSTR_left_mouth), left_mouth);
-                //     mp_obj_dict_store(face_dict, MP_OBJ_NEW_QSTR(MP_QSTR_right_mouth), right_mouth);
-                    
-                //     mp_obj_dict_store(result_dict, MP_OBJ_NEW_QSTR(MP_QSTR_face_detect), face_dict);
-                // }
-                
-                // // 添加猫咪检测数据
-                // if (data.cat_flag) {
-                //     mp_obj_t cat_dict = mp_obj_new_dict(0);
-                //     mp_obj_dict_store(cat_dict, MP_OBJ_NEW_QSTR(MP_QSTR_frame_length), mp_obj_new_int(data.cat_detect.cat_frame_length));
-                //     mp_obj_dict_store(cat_dict, MP_OBJ_NEW_QSTR(MP_QSTR_frame_width), mp_obj_new_int(data.cat_detect.cat_frame_width));
-                //     mp_obj_dict_store(result_dict, MP_OBJ_NEW_QSTR(MP_QSTR_cat_detect), cat_dict);
-                // }
-                
-                // // 添加二维码数据
-                // if (data.code_flag && data.code_data != NULL) {
-                //     mp_obj_dict_store(result_dict, MP_OBJ_NEW_QSTR(MP_QSTR_code_data), mp_obj_new_str(data.code_data, strlen(data.code_data)));
-                // }
-                
-                // // 添加运动检测标志
-                // mp_obj_dict_store(result_dict, MP_OBJ_NEW_QSTR(MP_QSTR_move_flag), mp_obj_new_bool(data.move_flag));
-                // mp_obj_dict_store(result_dict, MP_OBJ_NEW_QSTR(MP_QSTR_face_flag), mp_obj_new_bool(data.face_flag));
-                // mp_obj_dict_store(result_dict, MP_OBJ_NEW_QSTR(MP_QSTR_cat_flag), mp_obj_new_bool(data.cat_flag));
-                // mp_obj_dict_store(result_dict, MP_OBJ_NEW_QSTR(MP_QSTR_code_flag), mp_obj_new_bool(data.code_flag));
-                
-                //mp_sched_schedule(g_ai_callback, result_dict);
+                // 只发送简单的通知，不发送数据
+                mp_sched_schedule(g_ai_callback, mp_const_none);
             }
         }
     }
+    vTaskDelete(NULL);
 }
 
-// 启动任务
-static mp_obj_t mp_face_recognize_start(void) {
-    if (!result_queue) {
-        result_queue = xQueueCreate(10, sizeof(ai_data_obj_t)); // 最多缓存10个结果
-    }
-    xTaskCreatePinnedToCore(face_recognize_start_task, "face_recognize_start_task", 1024*8, NULL, 4, NULL, 0);
-    xTaskCreatePinnedToCore(ai_callback_task, "ai_cb_task", 1024*4, NULL, 5, NULL, 1);
-    return mp_const_none;
-}
-static MP_DEFINE_CONST_FUN_OBJ_0(mp_face_recognize_start_obj, mp_face_recognize_start);
+
 
 
 static mp_obj_t mp_camera_start(void) {
@@ -158,12 +128,19 @@ static mp_obj_t mp_camera_start(void) {
         snprintf(error_msg, sizeof(error_msg), "Camera init failed with error 0x%x\n", err);
         mp_print_face_cstr(error_msg);
     }
-    xTaskCreatePinnedToCore(camera_start_task, "camera_start_task", 4096, NULL, 5, NULL, 0);
+    xTaskCreatePinnedToCore(camera_start_task, "camera_start_task", 1024*16, NULL, 1, &camera_start_task_handle, 0);
     return mp_const_none;
 }
 
 static MP_DEFINE_CONST_FUN_OBJ_0(mp_camera_start_obj, mp_camera_start);
 
+// 启动任务
+static mp_obj_t mp_face_recognize_start(void) {
+    init_ai_flag = 1;
+    xTaskCreatePinnedToCore(face_recognize_start_task, "face_recognize_start_task", 1024*16, NULL, 1, &face_recognize_task_handle, 0);
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(mp_face_recognize_start_obj, mp_face_recognize_start);
 
 static mp_obj_t mp_register_face(void) {
     register_face_flag = 1;
@@ -192,33 +169,227 @@ static mp_obj_t mp_reset_faces(void) {
 static MP_DEFINE_CONST_FUN_OBJ_0(mp_reset_faces_obj, mp_reset_faces);
 
 static mp_obj_t mp_init_ai(void) {
+    init_ai_flag = 0;
+    free_ai_flag = 0;
+    free_camera_flag = 0;
+    if (!result_queue) {
+        result_queue = xQueueCreate(10, sizeof(ai_data_obj_t)); // 最多缓存10个结果
+    }
+    // 创建AI回调任务
+    if (!ai_callback_task_handle) {
+        xTaskCreatePinnedToCore(ai_callback_task, "ai_cb_task", 1024*4, NULL, 5, &ai_callback_task_handle, 1);
+    }
+    if (!camera_output_queue) {
+        camera_output_queue = xQueueCreate(5, sizeof(camera_fb_t *)); // 最多缓存5个帧指针
+    }
+    
     init_ai();
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(mp_init_ai_obj, mp_init_ai);
 
 static mp_obj_t mp_cat_detect(void) {
-    xTaskCreatePinnedToCore(cat_detect_task, "cat_detect_task", 1024*8, NULL, 4, NULL, 0);
+    init_ai_flag = 1;
+    xTaskCreatePinnedToCore(cat_detect_task, "cat_detect_task", 1024*16, NULL, 1, &cat_detect_task_handle, 0);
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(mp_cat_detect_obj, mp_cat_detect);
 
 static mp_obj_t mp_code_scanner(void) {
-    xTaskCreatePinnedToCore(code_scanner_task, "code_scanner_task", 1024*8, NULL, 4, NULL, 0);
+    init_ai_flag = 1;
+    xTaskCreatePinnedToCore(code_scanner_task, "code_scanner_task", 1024*8, NULL, 4, &code_scanner_task_handle, 0);
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(mp_code_scanner_obj, mp_code_scanner);
 
 static mp_obj_t mp_move_detect(void) {
-    xTaskCreatePinnedToCore(move_detect_task, "move_detect_task", 1024*8, NULL, 4, NULL, 0);
+    init_ai_flag = 1;
+    xTaskCreatePinnedToCore(move_detect_task, "move_detect_task", 1024*8, NULL, 4, &move_detect_task_handle, 0);
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(mp_move_detect_obj, mp_move_detect);
+
+static mp_obj_t mp_camera_capture(void) {
+    camera_fb_t *frame = NULL;
+    if (init_ai_flag == 0) {
+        if (xQueueReceive(camera_queue, &frame, 0)) { // 非阻塞接收
+            if (frame) {
+                mp_obj_t image = mp_obj_new_bytes(frame->buf, frame->len);
+                esp_camera_fb_return(frame); // 释放帧缓冲区
+                if (image != mp_const_none) {
+                    return image;
+                }
+                // 如果创建bytes对象失败，返回None
+            }
+        }
+    }else{
+        if (xQueueReceive(camera_output_queue, &frame, 0)) { // 非阻塞接收
+            if (frame) {
+                mp_obj_t image = mp_obj_new_bytes(frame->buf, frame->len);
+                esp_camera_fb_return(frame); // 释放帧缓冲区
+                if (image != mp_const_none) {
+                    return image;
+                }
+                // 如果创建bytes对象失败，返回None
+            }
+        }
+    }
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(mp_camera_capture_obj, mp_camera_capture);
+
+// 获取完整的AI数据
+static mp_obj_t mp_get_ai_data(void) {
+    mp_obj_t result_dict = mp_obj_new_dict(0);
+    
+    // 添加基本标志
+    mp_obj_dict_store(result_dict, MP_OBJ_NEW_QSTR(MP_QSTR_move_flag), mp_obj_new_bool(g_latest_ai_data.move_flag));
+    mp_obj_dict_store(result_dict, MP_OBJ_NEW_QSTR(MP_QSTR_face_flag), mp_obj_new_bool(g_latest_ai_data.face_flag));
+    mp_obj_dict_store(result_dict, MP_OBJ_NEW_QSTR(MP_QSTR_cat_flag), mp_obj_new_bool(g_latest_ai_data.cat_flag));
+    mp_obj_dict_store(result_dict, MP_OBJ_NEW_QSTR(MP_QSTR_code_flag), mp_obj_new_bool(g_latest_ai_data.code_flag));
+    
+    // 添加人脸检测数据（总是创建，即使没有检测到人脸）
+    mp_obj_t face_dict = mp_obj_new_dict(0);
+    mp_obj_dict_store(face_dict, MP_OBJ_NEW_QSTR(MP_QSTR_face_id), mp_obj_new_int(g_latest_ai_data.face_detect.face_id));
+    mp_obj_dict_store(face_dict, MP_OBJ_NEW_QSTR(MP_QSTR_frame_length), mp_obj_new_int(g_latest_ai_data.face_detect.face_frame_length));
+    mp_obj_dict_store(face_dict, MP_OBJ_NEW_QSTR(MP_QSTR_frame_width), mp_obj_new_int(g_latest_ai_data.face_detect.face_frame_width));
+    
+    // 添加面部特征点坐标
+    mp_obj_t left_eye = mp_obj_new_tuple(2, (mp_obj_t[]){mp_obj_new_int(g_latest_ai_data.face_detect.face_left_eys[0]), mp_obj_new_int(g_latest_ai_data.face_detect.face_left_eys[1])});
+    mp_obj_t right_eye = mp_obj_new_tuple(2, (mp_obj_t[]){mp_obj_new_int(g_latest_ai_data.face_detect.face_right_eys[0]), mp_obj_new_int(g_latest_ai_data.face_detect.face_right_eys[1])});
+    mp_obj_t nose = mp_obj_new_tuple(2, (mp_obj_t[]){mp_obj_new_int(g_latest_ai_data.face_detect.face_nose[0]), mp_obj_new_int(g_latest_ai_data.face_detect.face_nose[1])});
+    mp_obj_t left_mouth = mp_obj_new_tuple(2, (mp_obj_t[]){mp_obj_new_int(g_latest_ai_data.face_detect.face_left_mouth[0]), mp_obj_new_int(g_latest_ai_data.face_detect.face_left_mouth[1])});
+    mp_obj_t right_mouth = mp_obj_new_tuple(2, (mp_obj_t[]){mp_obj_new_int(g_latest_ai_data.face_detect.face_right_mouth[0]), mp_obj_new_int(g_latest_ai_data.face_detect.face_right_mouth[1])});
+    
+    mp_obj_dict_store(face_dict, MP_OBJ_NEW_QSTR(MP_QSTR_left_eye), left_eye);
+    mp_obj_dict_store(face_dict, MP_OBJ_NEW_QSTR(MP_QSTR_right_eye), right_eye);
+    mp_obj_dict_store(face_dict, MP_OBJ_NEW_QSTR(MP_QSTR_nose), nose);
+    mp_obj_dict_store(face_dict, MP_OBJ_NEW_QSTR(MP_QSTR_left_mouth), left_mouth);
+    mp_obj_dict_store(face_dict, MP_OBJ_NEW_QSTR(MP_QSTR_right_mouth), right_mouth);
+    
+    mp_obj_dict_store(result_dict, MP_OBJ_NEW_QSTR(MP_QSTR_face_detect), face_dict);
+    
+    // 添加猫咪检测数据（总是创建，即使没有检测到猫咪）
+    mp_obj_t cat_dict = mp_obj_new_dict(0);
+    mp_obj_dict_store(cat_dict, MP_OBJ_NEW_QSTR(MP_QSTR_frame_length), mp_obj_new_int(g_latest_ai_data.cat_detect.cat_frame_length));
+    mp_obj_dict_store(cat_dict, MP_OBJ_NEW_QSTR(MP_QSTR_frame_width), mp_obj_new_int(g_latest_ai_data.cat_detect.cat_frame_width));
+    mp_obj_dict_store(result_dict, MP_OBJ_NEW_QSTR(MP_QSTR_cat_detect), cat_dict);
+    
+    // 添加二维码数据（总是创建，即使没有检测到二维码）
+    if (g_latest_ai_data.code_data != NULL) {
+        mp_obj_dict_store(result_dict, MP_OBJ_NEW_QSTR(MP_QSTR_code_data), mp_obj_new_str(g_latest_ai_data.code_data, strlen(g_latest_ai_data.code_data)));
+    } else {
+        mp_obj_dict_store(result_dict, MP_OBJ_NEW_QSTR(MP_QSTR_code_data), mp_const_none);
+    }
+    
+    return result_dict;
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(mp_get_ai_data_obj, mp_get_ai_data);
+
+// 检查AI数据是否已更新
+static mp_obj_t mp_is_ai_data_updated(void) {
+    bool updated = g_ai_data_updated;
+    g_ai_data_updated = false; // 重置标志
+    return mp_obj_new_bool(updated);
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(mp_is_ai_data_updated_obj, mp_is_ai_data_updated);
+
+// 释放AI系统和资源
+static mp_obj_t mp_deinit_ai(void) {
+    printf("AI系统开始强制清理资源...\n");
+    
+    // 立即设置退出标志
+    free_ai_flag = 1;
+    free_camera_flag = 1;
+    
+    // 强制删除所有任务，不等待
+    printf("强制删除所有AI任务...\n");
+    if (ai_callback_task_handle != NULL) {
+        vTaskDelete(ai_callback_task_handle);
+        ai_callback_task_handle = NULL;
+        printf("已删除ai_callback_task\n");
+    }
+    
+    if (face_recognize_task_handle != NULL) {
+        vTaskDelete(face_recognize_task_handle);
+        face_recognize_task_handle = NULL;
+        printf("已删除face_recognize_task\n");
+    }
+    
+    if (camera_start_task_handle != NULL) {
+        vTaskDelete(camera_start_task_handle);
+        camera_start_task_handle = NULL;
+        printf("已删除camera_start_task\n");
+    }
+    
+    if (cat_detect_task_handle != NULL) {
+        vTaskDelete(cat_detect_task_handle);
+        cat_detect_task_handle = NULL;
+        printf("已删除cat_detect_task\n");
+    }
+    
+    if (code_scanner_task_handle != NULL) {
+        vTaskDelete(code_scanner_task_handle);
+        code_scanner_task_handle = NULL;
+        printf("已删除code_scanner_task\n");
+    }
+    
+    if (move_detect_task_handle != NULL) {
+        vTaskDelete(move_detect_task_handle);
+        move_detect_task_handle = NULL;
+        printf("已删除move_detect_task\n");
+    }
+    
+    // 短暂等待确保任务删除完成
+    vTaskDelay(pdMS_TO_TICKS(50));
+    
+    // 强制清理队列
+    printf("强制清理队列...\n");
+    if (result_queue != NULL) {
+        vQueueDelete(result_queue);
+        result_queue = NULL;
+        printf("已删除result_queue\n");
+    }
+    
+    if (camera_output_queue != NULL) {
+        vQueueDelete(camera_output_queue);
+        camera_output_queue = NULL;
+        printf("已删除camera_output_queue\n");
+    }
+    
+    // 调用C++的强制清理函数
+    extern void cleanup_ai_resources_force(void);
+    cleanup_ai_resources_force();
+    
+    // 强制清理摄像头
+    printf("强制清理摄像头...\n");
+    esp_camera_deinit();
+    
+    // 重置所有状态
+    printf("重置所有状态...\n");
+    g_ai_callback = mp_const_none;
+    g_ai_data_updated = false;
+    memset(&g_latest_ai_data, 0, sizeof(g_latest_ai_data));
+    
+    // 重置所有标志位
+    init_ai_flag = 0;
+    free_ai_flag = 0;
+    free_camera_flag = 0;
+    register_face_flag = 0;
+    recognize_face_flag = 0;
+    remove_face_flag = 0;
+    reset_faces_flag = 0;
+    
+    printf("AI系统强制清理完成\n");
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_0(mp_deinit_ai_obj, mp_deinit_ai);
 
 
 static const mp_rom_map_elem_t k10_ai_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR___name__), MP_ROM_QSTR(MP_QSTR_ai) },
     { MP_ROM_QSTR(MP_QSTR_init_ai), MP_ROM_PTR(&mp_init_ai_obj) },//人脸识别初始化
+    { MP_ROM_QSTR(MP_QSTR_deinit_ai), MP_ROM_PTR(&mp_deinit_ai_obj) },//释放AI系统资源
     { MP_ROM_QSTR(MP_QSTR_set_ai_callback), MP_ROM_PTR(&mp_set_ai_callback_obj) },//设置AI回调
     { MP_ROM_QSTR(MP_QSTR_camera_start), MP_ROM_PTR(&mp_camera_start_obj) },//初始化摄像头
     { MP_ROM_QSTR(MP_QSTR_face_recognize_start), MP_ROM_PTR(&mp_face_recognize_start_obj) },//启动人脸识别
@@ -229,6 +400,9 @@ static const mp_rom_map_elem_t k10_ai_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_cat_detect), MP_ROM_PTR(&mp_cat_detect_obj) },//猫脸检测
     { MP_ROM_QSTR(MP_QSTR_code_scanner), MP_ROM_PTR(&mp_code_scanner_obj) },//二维码扫描
     { MP_ROM_QSTR(MP_QSTR_move_detect), MP_ROM_PTR(&mp_move_detect_obj) },//移动检测
+    { MP_ROM_QSTR(MP_QSTR_camera_capture), MP_ROM_PTR(&mp_camera_capture_obj) },//获取摄像头图像
+    { MP_ROM_QSTR(MP_QSTR_get_ai_data), MP_ROM_PTR(&mp_get_ai_data_obj) },//获取完整AI数据
+    { MP_ROM_QSTR(MP_QSTR_is_ai_data_updated), MP_ROM_PTR(&mp_is_ai_data_updated_obj) },//检查AI数据是否更新
 };
 
 static MP_DEFINE_CONST_DICT(k10_ai_globals, k10_ai_globals_table);
