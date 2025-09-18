@@ -6,9 +6,11 @@ import time,vfs,camera,network,ubinascii
 from umqtt.robust import MQTTClient as MQTT
 from ili9xxx import Ili9341
 import _thread
+import fs_driver, math
 from _thread import allocate_lock
 import uasyncio as asyncio
 gc.collect()
+import struct
 
 '''
 K10的引脚操作类
@@ -805,6 +807,36 @@ class Speaker(object):
         self.i2s.deinit()
         self._i2c = k10_i2c
         print("init done\n")
+        self.buzzMelody = 2
+        self.playTone = 2
+        self.freqTable = [ 31, 33, 35, 37, 39, 41, 44, 46, 49, 52, 55, 58, 62, 65, 69, 73, 78, 82, 87, 92, 98, 104, 110, 
+                          117, 123, 131, 139, 147, 156, 165, 175, 185, 196, 208, 220, 233, 247, 262, 277, 294, 311, 330, 349, 370, 392, 
+                          415, 440, 466, 494, 523, 554, 587, 622, 659, 698, 740, 784, 831, 880, 932, 988, 1047, 1109, 1175, 1245, 1319, 
+                          1397, 1480, 1568, 1661, 1760, 1865, 1976, 2093, 2217, 2349, 2489, 2637, 2794, 2960, 3136, 3322, 3520, 3729, 3951, 4186]
+        self.currentDuration = 4  # Default duration (Crotchet)
+        self.currentOctave = 4    # Middle octave
+        self.beatsPerMinute = 15  # Default BPM
+        self.TWO_PI = 6.283185307179586476925286766559
+        self.music_notes={"DADADADUM":"r4:2|g|g|g|eb:8|r:2|f|f|f|d:8|",
+                          "ENTERTAINER":"d4:1|d#|e|c5:2|e4:1|c5:2|e4:1|c5:3|c:1|d|d#|e|c|d|e:2|b4:1|d5:2|c:4|",
+                          "PRELUDE":"c4:1|e|g|c5|e|g4|c5|e|c4|e|g|c5|e|g4|c5|e|c4|d|g|d5|f|g4|d5|f|c4|d|g|d5|f|g4|d5|f|b3|d4|g|d5|f|g4|d5|f|b3|d4|g|d5|f|g4|d5|f|c4|e|g|c5|e|g4|c5|e|c4|e|g|c5|e|g4|c5|e|",
+                          "ODE":"e4|e|f|g|g|f|e|d|c|c|d|e|e:6|d:2|d:8|e:4|e|f|g|g|f|e|d|c|c|d|e|d:6|c:2|c:8|",
+                          "NYAN":"f#5:2|g#|c#:1|d#:2|b4:1|d5:1|c#|b4:2|b|c#5|d|d:1|c#|b4:1|c#5:1|d#|f#|g#|d#|f#|c#|d|b4|c#5|b4|d#5:2|f#|g#:1|d#|f#|c#|d#|b4|d5|d#|d|c#|b4|c#5|d:2|b4:1|c#5|d#|f#|c#|d|c#|b4|c#5:2|b4|c#5|b4|f#:1|g#|b:2|f#:1|g#|b|c#5|d#|b4|e5|d#|e|f#|b4:2|b|f#:1|g#|b|f#|e5|d#|c#|b4|f#|d#|e|f#|b:2|f#:1|g#|b:2|f#:1|g#|b|b|c#5|d#|b4|f#|g#|f#|b:2|b:1|a#|b|f#|g#|b|e5|d#|e|f#|b4:2|c#5|",
+                          "RINGTONE":"c4:1|d|e:2|g|d:1|e|f:2|a|e:1|f|g:2|b|c5:4|",
+                          "FUNK":"c2:2|c|d#|c:1|f:2|c:1|f:2|f#|g|c|c|g|c:1|f#:2|c:1|f#:2|f|d#|",
+                          "BIRTHDAY":"c4:3|c:1|d:4|c:4|f|e:8|c:3|c:1|d:4|c:4|g|f:8|c:3|c:1|c5:4|a4|f|e|d|a#:3|a#:1|a:4|f|g|f:8|",
+                          "WEDDING":"c4:4|f:3|f:1|f:8|c:4|g:3|e:1|f:8|c:4|f:3|a:1|c5:4|a4:3|f:1|f:4|e:3|f:1|g:8|",
+                          "FUNERAL":"c3:4|c:3|c:1|c:4|d#:3|d:1|d:3|c:1|c:3|b2:1|c3:4|",
+                          "PUNCHLINE":"c4:3|g3:1|f#|g|g#:3|g|r|b|c4|",
+                          "BADDY":"c3:3|r|d:2|d#|r|c|r|f#:8|",
+                          "CHASE":"a4:1|b|c5|b4|a:2|r|a:1|b|c5|b4|a:2|r|a:2|e5|d#|e|f|e|d#|e|b4:1|c5|d|c|b4:2|r|b:1|c5|d|c|b4:2|r|b:2|e5|d#|e|f|e|d#|e|",
+                          "BA_DING":"b5:1|e6:3|",
+                          "JUMP_UP":"c5:1|d|e|f|g|",
+                          "JUMP_DOWN":"g5:1|f|e|d|c|",
+                          "POWER_UP":"g4:1|c5|e|g:2|e:1|g:3|",
+                          "POWER_DOWN":"g5:1|d#|c|g4:2|b:1|c5:3|"}
+        
+
     def __del__(self):
         print("Speaker deleted\n")
         if self.i2s:
@@ -814,6 +846,7 @@ class Speaker(object):
             self._i2c.writeto_mem(0x20,0x2A,bytearray([0x00]))
         except:
             pass
+
     def deinit(self):
         print("Speaker deinit\n")
         if self.i2s:
@@ -844,10 +877,72 @@ class Speaker(object):
 
         return sample_rate, bits_per_sample, num_channels
     
-    def play_tone(self,note):
-        pass
-    def play_tone_music(self,tone_music):
-        pass
+    def play_tone(self,freq, beat):
+        buf = bytearray(4)
+        for i in range(beat):
+            sample = int(32767.0 * math.sin(i * 2 * math.pi  * freq / 8000))
+            struct.pack_into('<hh', buf, 0, sample, sample)  # 打包左右声道
+            self.i2s.write(buf)
+
+    def play_tone_music(self,tone_music: str):
+        name = tone_music.upper()  # 确保输入大写
+        if name in self.music_notes:
+            music_sequence = self.music_notes[name]
+            for note in music_sequence.split("|"):
+                if note:  # 跳过空字符串
+                    self.play_next_note(note)  # 调用实际播放方法
+                    
+        else:
+            print(f"Error: {name} not found in music_data")
+            pass
+
+    def play_next_note(self, tone: str):
+        curr_note = tone
+        current_duration = self.currentDuration
+        current_octave = self.currentOctave
+        is_rest = False
+        parsing_octave = True
+        note = 0
+        beat_pos = 0
+
+        for pos, note_char in enumerate(curr_note):
+            if note_char in ['c', 'C']:
+                note = 1
+            elif note_char in ['d', 'D']:
+                note = 3
+            elif note_char in ['e', 'E']:
+                note = 5
+            elif note_char in ['f', 'F']:
+                note = 6
+            elif note_char in ['g', 'G']:
+                note = 8
+            elif note_char in ['a', 'A']:
+                note = 10
+            elif note_char in ['b', 'B']:
+                note = 12
+            elif note_char in ['r', 'R']:
+                is_rest = True
+            elif note_char == '#':
+                note += 1
+            elif note_char == ':':
+                parsing_octave = False
+                beat_pos = pos
+            elif parsing_octave and note_char.isdigit():
+                current_octave = int(note_char)
+        
+        if not parsing_octave and beat_pos + 1 < len(curr_note) and curr_note[beat_pos + 1].isdigit():
+            current_duration = int(curr_note[beat_pos + 1])
+
+        beat = (60000 / self.beatsPerMinute) / 4
+
+        if not is_rest:
+            key_number = note + (12 * (current_octave - 1))
+            frequency = self.freqTable[key_number] if 0 <= key_number < len(self.freqTable) else 0
+            self.play_tone(frequency, current_duration * beat) #发送声音效果
+
+        self.currentDuration = current_duration
+        self.currentOctave = current_octave
+
     def play_sys_music(self,path):
         full_path = "/" + path
         self.play_music(full_path)
@@ -886,13 +981,15 @@ class Speaker(object):
         except:
             pass
 
+
+
 '''
 K10的SD卡类
 '''
 class TF_card(object):
     def __init__(self):
         try:
-            self.spi_bus = SPI(2, mosi = 42, miso = 41, sck = 44)
+            self.spi_bus = SPI(0, mosi = 42, miso = 41, sck = 44)
             self.sd = SDCard(spi_bus = self.spi_bus, cs = 40, freq = 1000000)
             vfs.mount(self.sd, "/sd")
         except:
@@ -920,7 +1017,7 @@ class Camera(object):
         temp = self._i2c.readfrom_mem(0x20, 0x02, 1)
         self._i2c.writeto(0x20,bytearray([0x02, (temp[0] | 0x02)]))
         self.cam.init(0)
-    def capture(self):
+    def camera_capture(self):
         return self.cam.capture()
     def save(self):
         pass
@@ -1794,7 +1891,7 @@ class MqttClient():
         elif(password!=None):
             psd = password
         try:
-            self.client = MQTT(client_id, server, port, user, psd, 0)
+            self.client = MQTT(client_id, server, port, user, psd, 60)
             self.client.connect()
             self.server = server
             self.port = port
@@ -1814,10 +1911,10 @@ class MqttClient():
     def connected(self):
         return self._connected
 
-    def publish(self, topic, content):
+    def publish(self, topic, content, _qos = 1):
         try:
             self.lock = True
-            self.client.publish(str(topic),str(content).encode("utf-8"))
+            self.client.publish(str(topic),str(content).encode("utf-8"),qos=_qos)
             self.lock = False
         except Exception as e:
             print('publish error:{}'.format(e))
