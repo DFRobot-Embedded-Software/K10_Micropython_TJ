@@ -1262,6 +1262,18 @@ class Screen(object):
 
     def show_camera(self,camera):
         self.camera_timer = lv.timer_create(lambda t: self.show_camera_img(camera.camera_capture()), 1, None)
+    
+    def deinit(self):
+        if self.camera_timer:
+            self.camera_timer.delete()
+            self.camera_timer = None
+        lv.deinit()
+        self.display_bus.deinit()
+        self.spi_bus.deinit()
+        self.img.deinit()
+        self.canvas.deinit()
+        self.layer.deinit()
+        self.area.deinit()
     '''
     def show_cat_detect(self, camera):
         import time

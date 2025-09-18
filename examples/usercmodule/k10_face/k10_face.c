@@ -296,65 +296,54 @@ static MP_DEFINE_CONST_FUN_OBJ_0(mp_is_ai_data_updated_obj, mp_is_ai_data_update
 
 // 释放AI系统和资源
 static mp_obj_t mp_deinit_ai(void) {
-    printf("AI系统开始强制清理资源...\n");
     
     // 立即设置退出标志
     free_ai_flag = 1;
     free_camera_flag = 1;
     
     // 强制删除所有任务，不等待
-    printf("强制删除所有AI任务...\n");
     if (ai_callback_task_handle != NULL) {
         vTaskDelete(ai_callback_task_handle);
         ai_callback_task_handle = NULL;
-        printf("已删除ai_callback_task\n");
     }
     
     if (face_recognize_task_handle != NULL) {
         vTaskDelete(face_recognize_task_handle);
         face_recognize_task_handle = NULL;
-        printf("已删除face_recognize_task\n");
     }
     
     if (camera_start_task_handle != NULL) {
         vTaskDelete(camera_start_task_handle);
         camera_start_task_handle = NULL;
-        printf("已删除camera_start_task\n");
     }
     
     if (cat_detect_task_handle != NULL) {
         vTaskDelete(cat_detect_task_handle);
         cat_detect_task_handle = NULL;
-        printf("已删除cat_detect_task\n");
     }
     
     if (code_scanner_task_handle != NULL) {
         vTaskDelete(code_scanner_task_handle);
         code_scanner_task_handle = NULL;
-        printf("已删除code_scanner_task\n");
     }
     
     if (move_detect_task_handle != NULL) {
         vTaskDelete(move_detect_task_handle);
         move_detect_task_handle = NULL;
-        printf("已删除move_detect_task\n");
     }
     
     // 短暂等待确保任务删除完成
     vTaskDelay(pdMS_TO_TICKS(50));
     
     // 强制清理队列
-    printf("强制清理队列...\n");
     if (result_queue != NULL) {
         vQueueDelete(result_queue);
         result_queue = NULL;
-        printf("已删除result_queue\n");
     }
     
     if (camera_output_queue != NULL) {
         vQueueDelete(camera_output_queue);
         camera_output_queue = NULL;
-        printf("已删除camera_output_queue\n");
     }
     
     // 调用C++的强制清理函数
@@ -362,11 +351,9 @@ static mp_obj_t mp_deinit_ai(void) {
     cleanup_ai_resources_force();
     
     // 强制清理摄像头
-    printf("强制清理摄像头...\n");
     esp_camera_deinit();
     
     // 重置所有状态
-    printf("重置所有状态...\n");
     g_ai_callback = mp_const_none;
     g_ai_data_updated = false;
     memset(&g_latest_ai_data, 0, sizeof(g_latest_ai_data));
@@ -380,7 +367,6 @@ static mp_obj_t mp_deinit_ai(void) {
     remove_face_flag = 0;
     reset_faces_flag = 0;
     
-    printf("AI系统强制清理完成\n");
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(mp_deinit_ai_obj, mp_deinit_ai);
