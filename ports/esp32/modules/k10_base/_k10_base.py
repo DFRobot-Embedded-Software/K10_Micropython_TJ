@@ -1128,26 +1128,41 @@ class Screen(object):
 
     def show_camera_img(self,buf):
         if buf is None or len(buf) != 240*320*2:
-            #print(f"错误：图像数据无效，长度: {len(buf) if buf else 0}, 期望: {240*320*2}")
             return
-        
-        # 确保 buf 是 bytearray 类型以便修改
-        if isinstance(buf, bytes):
-            buf = bytearray(buf)
-        
-        # 交换RGB565字节序
-        lv.draw_sw_rgb565_swap(buf, 240*320*2)
-        
-        # 创建新的 image_dsc 而不是修改现有的
-        img_dsc = lv.image_dsc_t(
-            dict(
-                header = dict(cf = lv.COLOR_FORMAT.RGB565, w=240, h=320),
-                data_size = 240*320*2,
-                data = bytes(buf)  # 转换为不可变的 bytes
+
+        # 持久化初始化：display_buf / img_dsc / img 只创建一次
+        if not hasattr(self, 'display_buf'):
+            self.display_buf = bytearray(240*320*2)
+
+        if not hasattr(self, 'img_dsc') or self.img_dsc is None:
+            self.img_dsc = lv.image_dsc_t(
+                dict(
+                    header = dict(cf = lv.COLOR_FORMAT.RGB565, w=240, h=320),
+                    data_size = 240*320*2,
+                    data = bytes(self.display_buf)
+                )
             )
-        )
-        
-        self.img.set_src(img_dsc)
+
+        if not hasattr(self, 'img') or self.img is None:
+            self.img = lv.image(self.screen)
+            self.img.set_src(self.img_dsc)
+
+        # 将输入帧拷贝到自有缓冲，避免依赖外部生命周期
+        if isinstance(buf, (bytes, bytearray)):
+            self.display_buf[:] = buf
+        else:
+            # 兜底：尽量从缓冲协议读取
+            b = bytes(buf)
+            if len(b) != len(self.display_buf):
+                return
+            self.display_buf[:] = b
+
+        # 如需RGB565字节交换可打开下一行
+        lv.draw_sw_rgb565_swap(self.display_buf, len(self.display_buf))
+
+        # 更新同一个 img_dsc 的数据并刷新
+        self.img_dsc.data = bytes(self.display_buf)
+        self.img.set_src(self.img_dsc)
         lv.refr_now(None)
 
     def show_camera(self,camera):
@@ -1165,6 +1180,85 @@ class Screen(object):
         self.running = True
         self.cat_timer = None
         self.show_timer = None
+
+    # -------- 双缓冲与限流刷新（新） --------
+    def init_camera_double_buffer(self, width=240, height=320, period_ms=50, swap_rgb565=True):
+        self._dbuf_w = width
+        self._dbuf_h = height
+        self._dbuf_bytes = width * height * 2
+        self._dbuf_swap = swap_rgb565
+        # 持久化显示缓冲（用于向 LVGL 提供数据）
+        self.display_buf = bytearray(self._dbuf_bytes)
+        # 双缓冲：生产者写入、消费者读取
+        import _thread
+        self._dbuf_lock = getattr(self, '_dbuf_lock', None) or _thread.allocate_lock()
+        self._buf_a = bytearray(self._dbuf_bytes)
+        self._buf_b = bytearray(self._dbuf_bytes)
+        self._write_idx = 0
+        self._read_idx = 1
+        self._have_new = False
+        self._refresh_period_ms = period_ms
+
+        # LVGL对象只创建一次
+        if not hasattr(self, 'img_dsc') or self.img_dsc is None:
+            self.img_dsc = lv.image_dsc_t(
+                dict(
+                    header = dict(cf = lv.COLOR_FORMAT.RGB565, w=width, h=height),
+                    data_size = self._dbuf_bytes,
+                    data = bytes(self.display_buf)
+                )
+            )
+        if not hasattr(self, 'img') or self.img is None:
+            self.img = lv.image(self.screen)
+            self.img.set_src(self.img_dsc)
+
+    def feed_camera_frame(self, buf):
+        # 喂入一帧到双缓冲（线程安全）
+        if not buf or len(buf) != self._dbuf_bytes:
+            return False
+        b = buf if isinstance(buf, (bytes, bytearray)) else bytes(buf)
+        with self._dbuf_lock:
+            if self._write_idx == 0:
+                self._buf_a[:] = b
+            else:
+                self._buf_b[:] = b
+            # 交换读写索引
+            self._write_idx, self._read_idx = self._read_idx, self._write_idx
+            self._have_new = True
+        return True
+
+    def _camera_refresh_cb(self, timer=None):
+        # 限流刷新：仅当有新帧时才刷新
+        local_updated = False
+        with self._dbuf_lock:
+            if self._have_new:
+                src = self._buf_a if self._read_idx == 0 else self._buf_b
+                # 将读缓冲复制到显示缓冲
+                self.display_buf[:] = src
+                self._have_new = False
+                local_updated = True
+        if not local_updated:
+            return
+        if self._dbuf_swap:
+            lv.draw_sw_rgb565_swap(self.display_buf, self._dbuf_bytes)
+        # 更新同一个 img_dsc 数据并刷新
+        self.img_dsc.data = bytes(self.display_buf)
+        self.img.set_src(self.img_dsc)
+        lv.refr_now(None)
+
+    def start_camera_refresh(self):
+        # 启动限流刷新定时器
+        self.stop_camera_refresh()
+        self._camera_timer = lv.timer_create(lambda t: self._camera_refresh_cb(), self._refresh_period_ms, None)
+
+    def stop_camera_refresh(self):
+        # 停止限流刷新
+        if hasattr(self, '_camera_timer') and self._camera_timer:
+            try:
+                self._camera_timer.delete()
+            except:
+                pass
+            self._camera_timer = None
         
         # 确保 img_dsc.data 被正确初始化
         if not hasattr(self, 'img_dsc') or self.img_dsc.data is None:
