@@ -989,8 +989,9 @@ K10的SD卡类
 class TF_card(object):
     def __init__(self):
         try:
-            self.spi_bus = SPI(0, mosi = 42, miso = 41, sck = 44)
-            self.sd = SDCard(spi_bus = self.spi_bus, cs = 40, freq = 1000000)
+            #self.spi_bus = SPI(2, mosi = 42, miso = 41, sck = 44)
+            #self.sd = SDCard(spi_bus = self.spi_bus, cs = 40, freq = 1000000)
+            self.sd = SDCard(slot=2, miso=41, mosi=42, sck=44, cs=40, freq=1000000)
             vfs.mount(self.sd, "/sd")
         except:
             print("SD card not detected")
@@ -1106,13 +1107,15 @@ class Screen(object):
         self.desc.color = lv.color_hex(color)
         self.desc.text = text
         if font_size == 16:
-            self.desc.font = lv.font_montserrat_16
+            self.desc.font = lv.font_k10_16
+        elif font_size == 24:
+            self.desc.font = lv.font_k10_24
         elif font_size == 14:
             self.desc.font = lv.font_montserrat_14
         elif font_size == 12:
             self.desc.font = lv.font_montserrat_12
         else:
-            font_size = 16
+            self.desc.font = lv.font_k10_16
 
         #按坐标显示
         if line == None:
@@ -1125,14 +1128,9 @@ class Screen(object):
         self.area.set_width(240-self.area.x1)
         self.area.set_height(font_size + 2)
 
-        #self.layer.draw_buf.clear(self.area)
-        #self.canvas.fill_bg(lv.color_white(), lv.OPA.TRANSP)
-        #self.canvas.get_draw_buf().clear(self.area)  # 强制清除画布缓冲区
-        #bytearray(self.canvas.get_buf())[:] = b'\x00' * len(self.canvas_buf)
+
         self.layer.draw_buf.clear(self.area)  # 清除图层缓冲区
-        #self.canvas_buf[:] = b'\x00' * len(self.canvas_buf)
         lv.draw_label(self.layer, self.desc, self.area)
-        #self.layer.draw_buf.clear(self.area)
 
     #画点
     def draw_point(self,x=0,y=0,color=0x0000FF):
