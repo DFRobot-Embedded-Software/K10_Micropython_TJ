@@ -86,14 +86,6 @@ static bool k10_get_glyph_dsc(const lv_font_t * font, lv_font_glyph_dsc_t * dsc_
         return false;
     }
     
-    // Check if it's a printable ASCII character or Chinese character
-    bool is_ascii = (unicode_letter >= 32 && unicode_letter <= 126);
-    bool is_chinese = (unicode_letter >= 0x4E00 && unicode_letter <= 0x9FFF);  // CJK Unified Ideographs
-    
-    if (!is_ascii && !is_chinese) {
-        return false;  // Character not supported
-    }
-    
     // Set glyph descriptor based on character type
     dsc_out->resolved_font = font;       // Set the resolved font
     dsc_out->box_h = 12;   /* Height of the glyph bitmap (in pixels) */
@@ -123,27 +115,13 @@ static const void * k10_get_glyph_bitmap(lv_font_glyph_dsc_t * g_dsc, lv_draw_bu
     
     uint32_t unicode_letter = g_dsc->gid.index;
     
-    // Check if unicode_letter is valid
-    bool is_ascii = (unicode_letter >= 32 && unicode_letter <= 126);
-    bool is_chinese = (unicode_letter >= 0x4E00 && unicode_letter <= 0x9FFF);  // CJK Unified Ideographs
-    
-    if (!is_ascii && !is_chinese) {
-        return NULL;
-    }
-    
     // Initialize font chip if needed
     if (!k10_font_init()) {
         return NULL;
     }
-    
-    // Get font data from K10 chip based on character type
-    bool data_retrieved = false;
-    
-    if (is_ascii) {
-        // Get ASCII character data
-        data_retrieved = ASCII_GetData((unsigned char)unicode_letter, ASCII_12_A, k10_font_buffer);
-    } else if (is_chinese) {
-        // Convert Unicode to GBK and get Chinese character data
+    if (unicode_letter < 128){
+        ASCII_GetData((unsigned char)unicode_letter, ASCII_12_A, k10_font_buffer);
+    }else{
         unsigned long gbk_code = U2G(unicode_letter);
         if (gbk_code != 0) {
             unsigned char c1 = (gbk_code >> 8) & 0xFF;
@@ -151,7 +129,6 @@ static const void * k10_get_glyph_bitmap(lv_font_glyph_dsc_t * g_dsc, lv_draw_bu
             gt_12_GetData(c1, c2, k10_font_buffer);
         }
     }
-    
         // Use the generic conversion function from fmt_txt
         if (draw_buf && draw_buf->data) {
             const uint8_t * bitmap_in = k10_font_buffer;
@@ -181,13 +158,6 @@ static bool k10_get_glyph_dsc_24(const lv_font_t * font, lv_font_glyph_dsc_t * d
         return false;
     }
     
-    // Check if it's a printable ASCII character or Chinese character
-    bool is_ascii = (unicode_letter >= 32 && unicode_letter <= 126);
-    bool is_chinese = (unicode_letter >= 0x4E00 && unicode_letter <= 0x9FFF);  // CJK Unified Ideographs
-    
-    if (!is_ascii && !is_chinese) {
-        return false;  // Character not supported
-    }
     
     // Set glyph descriptor based on character type
     dsc_out->resolved_font = font;       // Set the resolved font
@@ -218,26 +188,15 @@ static const void * k10_get_glyph_bitmap_24(lv_font_glyph_dsc_t * g_dsc, lv_draw
     
     uint32_t unicode_letter = g_dsc->gid.index;
     
-    // Check if unicode_letter is valid
-    bool is_ascii = (unicode_letter >= 32 && unicode_letter <= 126);
-    bool is_chinese = (unicode_letter >= 0x4E00 && unicode_letter <= 0x9FFF);  // CJK Unified Ideographs
-    
-    if (!is_ascii && !is_chinese) {
-        return NULL;
-    }
     
     // Initialize font chip if needed
     if (!k10_font_init()) {
         return NULL;
     }
     
-    // Get font data from K10 chip based on character type
-    bool data_retrieved = false;
-    
-    if (is_ascii) {
-        // Get ASCII character data
-        data_retrieved = ASCII_GetData((unsigned char)unicode_letter, ASCII_24_B, k10_font_buffer);
-    } else if (is_chinese) {
+    if (unicode_letter < 128) {
+        ASCII_GetData((unsigned char)unicode_letter, ASCII_24_B, k10_font_buffer);
+    } else{
         // Convert Unicode to GBK and get Chinese character data
         unsigned long gbk_code = U2G(unicode_letter);
         if (gbk_code != 0) {

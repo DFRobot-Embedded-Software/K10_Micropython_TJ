@@ -892,8 +892,9 @@ K10的SD卡类
 class TF_card(object):
     def __init__(self):
         try:
-            self.spi_bus = SPI(2, mosi = 42, miso = 41, sck = 44)
-            self.sd = SDCard(spi_bus = self.spi_bus, cs = 40, freq = 1000000)
+            #self.spi_bus = SPI(2, mosi = 42, miso = 41, sck = 44)
+            #self.sd = SDCard(spi_bus = self.spi_bus, cs = 40, freq = 1000000)
+            self.sd = SDCard(slot=2, miso=41, mosi=42, sck=44, cs=40, freq=1000000)
             vfs.mount(self.sd, "/sd")
         except:
             print("SD card not detected")
@@ -980,27 +981,6 @@ class Screen(object):
     #将缓存内容显示
     def show_draw(self):
         self.canvas.finish_layer(self.layer)
-
-        print("=== 在show_draw中读取画布数据 ===")
-        canvas_data = self.layer.draw_buf.data
-        print(f"画布数据类型: {type(canvas_data)}")
-        print(f"画布数据大小: {self.layer.draw_buf.data_size}")
-        print(f"画布尺寸: {self.layer.draw_buf.header.w} x {self.layer.draw_buf.header.h}")
-        
-        print("画布数据 (前64字节):")
-        try:
-            for i in range(0, 64, 4):
-                try:
-                    r = canvas_data[i]
-                    g = canvas_data[i+1]
-                    b = canvas_data[i+2] 
-                    a = canvas_data[i+3]
-                    print(f"  {i//4:2d}: R={r:3d} G={g:3d} B={b:3d} A={a:3d}")
-                except (IndexError, TypeError):
-                    print(f"  {i//4:2d}: 无法读取")
-                    break
-        except Exception as e:
-            print(f"读取数据时出错: {e}")
         self.canvas.invalidate()
         #lv.screen_load(self.screen)
 
@@ -1050,23 +1030,6 @@ class Screen(object):
 
         self.layer.draw_buf.clear(self.area)  # 清除图层缓冲区
         lv.draw_label(self.layer, self.desc, self.area)
-
-        canvas_data = self.layer.draw_buf.data
-        print(f"字符 '{text}' 的画布数据类型: {type(canvas_data)}")
-        print("画布数据 (前32字节):")
-        try:
-            for i in range(0, 32, 4):
-                try:
-                    r = canvas_data[i]
-                    g = canvas_data[i+1]
-                    b = canvas_data[i+2] 
-                    a = canvas_data[i+3]
-                    print(f"  {i//4:2d}: R={r:3d} G={g:3d} B={b:3d} A={a:3d}")
-                except (IndexError, TypeError):
-                    print(f"  {i//4:2d}: 无法读取")
-                    break
-        except Exception as e:
-            print(f"读取数据时出错: {e}")
 
     #画点
     def draw_point(self,x=0,y=0,color=0x0000FF):
