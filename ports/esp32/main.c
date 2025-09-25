@@ -201,7 +201,7 @@ soft_reset_exit:
     // TODO: machine_rmt_deinit_all();
     machine_pins_deinit();
     machine_deinit();
-    
+
     #if MICROPY_PY_SOCKET_EVENTS
     socket_events_deinit();
     #endif
@@ -226,7 +226,7 @@ void app_main(void) {
 
     // Create and transfer control to the MicroPython task.
     xTaskCreatePinnedToCore(mp_task, "mp_task", MICROPY_TASK_STACK_SIZE / sizeof(StackType_t), NULL, MP_TASK_PRIORITY, &mp_main_task_handle, MP_TASK_COREID);
-    
+
 }
 
 void nlr_jump_fail(void *val) {
@@ -265,4 +265,3 @@ void *esp_native_code_commit(void *buf, size_t len, void *reloc) {
     memcpy(p, buf, len);
     return p;
 }
-

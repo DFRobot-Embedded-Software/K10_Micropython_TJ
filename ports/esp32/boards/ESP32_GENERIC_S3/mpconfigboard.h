@@ -10,5 +10,4 @@
 #define MICROPY_HW_I2C0_SCL                 (48)
 #define MICROPY_HW_I2C0_SDA                 (47)
 
-#define MODULE_CAMERA_ENABLED               (1)//开启camera
-
+#define MODULE_CAMERA_ENABLED               (1)// 开启camera

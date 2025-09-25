@@ -4,7 +4,7 @@
 #if CONFIG_IDF_TARGET_ESP32S2 || CONFIG_IDF_TARGET_ESP32S3
 
     #define RTC_VALID_EXT_PINS \
-    ( \
+            ( \
     (1ll << 0) | \
     (1ll << 1) | \
     (1ll << 2) | \
@@ -27,13 +27,13 @@
     (1ll << 19) | \
     (1ll << 20) | \
     (1ll << 21)   \
-    )
+            )
     #define RTC_LAST_EXT_PIN 21
 
 #else
 
     #define RTC_VALID_EXT_PINS \
-    ( \
+            ( \
     (1ll << 0) | \
     (1ll << 2) | \
     (1ll << 4) | \
@@ -52,12 +52,12 @@
     (1ll << 37) | \
     (1ll << 38) | \
     (1ll << 39)   \
-    )
+            )
     #define RTC_LAST_EXT_PIN 39
 
 #endif
 
-#define RTC_IS_VALID_EXT_PIN(pin_id) ((1ll << (pin_id)) & RTC_VALID_EXT_PINS)
+#define RTC_IS_VALID_EXT_PIN(pin_id) ((1ll << (pin_id))&RTC_VALID_EXT_PINS)
 
 extern int8_t esp32_rmt_bitstream_channel_id;
 

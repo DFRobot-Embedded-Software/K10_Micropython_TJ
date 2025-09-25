@@ -36,8 +36,8 @@
 
 // Forward dec'l
 const mp_obj_type_t machine_servo_type;
-//extern const mp_obj_type_t machine_servo_type;   
-int pin_remap_esp32[] = {1, 2, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 48, 47};              
+// extern const mp_obj_type_t machine_servo_type;
+int pin_remap_esp32[] = {1, 2, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, 48, 47};
 
 typedef struct _esp32_servo_pwm_obj_t {
     mp_obj_base_t base;
@@ -80,8 +80,7 @@ static void pwm_init(void) {
     }
     for (int y = 0; y < 40; y++)
     {
-        if((GPIO.func_out_sel_cfg[y].func_sel >= 79) && (GPIO.func_out_sel_cfg[y].func_sel <= 86 ))
-        {
+        if ((GPIO.func_out_sel_cfg[y].func_sel >= 79) && (GPIO.func_out_sel_cfg[y].func_sel <= 86)) {
             // mp_warning(NULL, "func_sel:%d gpio_num: %d",GPIO.func_out_sel_cfg[y].func_sel, y );
             GPIO.func_out_sel_cfg[y].func_sel = 39;
             // GPIO.func_out_sel_cfg[y].oen_sel = 0;
@@ -136,7 +135,7 @@ static void esp32_servo_pwm_print(const mp_print_t *print, mp_obj_t self_in, mp_
 }
 
 static void esp32_servo_pwm_init_helper(esp32_servo_pwm_obj_t *self,
-        size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
+    size_t n_args, const mp_obj_t *pos_args, mp_map_t *kw_args) {
     enum { ARG_freq, ARG_angle, ARG_min_us, ARG_max_us, ARG_actuation_range };
     static const mp_arg_t allowed_args[] = {
         { MP_QSTR_freq, MP_ARG_INT, {.u_int = 50} },
@@ -206,15 +205,17 @@ static void esp32_servo_pwm_init_helper(esp32_servo_pwm_obj_t *self,
     // Set duty cycle?
     int angle = args[ARG_angle].u_int;
     if (angle != -1) {
-        if ((angle < 0) || (angle > self->actuation_range))
+        if ((angle < 0) || (angle > self->actuation_range)) {
             mp_raise_ValueError(MP_ERROR_TEXT("Angle out of range"));
+        }
         int us_range = self->max_us - self->min_us;
         int us = self->min_us + (int)(angle * us_range / self->actuation_range);
-        if ((us < self->min_us) || (us > self->max_us))
+        if ((us < self->min_us) || (us > self->max_us)) {
             mp_raise_ValueError(MP_ERROR_TEXT("Pulse width out of range"));
-        int duty = (int)((us * 1023)/ 20000);
+        }
+        int duty = (int)((us * 1023) / 20000);
 
-        duty &= ((1 << PWRES)-1);
+        duty &= ((1 << PWRES) - 1);
         duty >>= PWRES - timer_cfg.duty_resolution;
         ledc_set_duty(PWMODE, channel, duty);
         ledc_update_duty(PWMODE, channel);
@@ -222,7 +223,7 @@ static void esp32_servo_pwm_init_helper(esp32_servo_pwm_obj_t *self,
 }
 
 static mp_obj_t esp32_servo_pwm_make_new(const mp_obj_type_t *type,
-        size_t n_args, size_t n_kw, const mp_obj_t *args) {
+    size_t n_args, size_t n_kw, const mp_obj_t *args) {
     mp_arg_check_num(n_args, n_kw, 1, MP_OBJ_FUN_ARGS_MAX, true);
     // gpio_num_t pin_id = machine_pin_get_id(args[0]);
     int pin = mp_obj_get_int(args[0]);
@@ -251,7 +252,7 @@ static mp_obj_t esp32_servo_pwm_make_new(const mp_obj_type_t *type,
 }
 
 static mp_obj_t esp32_servo_pwm_init(size_t n_args,
-        const mp_obj_t *args, mp_map_t *kw_args) {
+    const mp_obj_t *args, mp_map_t *kw_args) {
     esp32_servo_pwm_init_helper(args[0], n_args - 1, args + 1, kw_args);
     return mp_const_none;
 }
@@ -268,7 +269,7 @@ static mp_obj_t esp32_servo_pwm_deinit(mp_obj_t self_in) {
         ledc_stop(PWMODE, chan, 0);
         self->active = 0;
         self->channel = -1;
-        //gpio_matrix_out(self->pin, SIG_GPIO_OUT_IDX, false, false);
+        // gpio_matrix_out(self->pin, SIG_GPIO_OUT_IDX, false, false);
         esp_rom_gpio_connect_out_signal(self->pin, SIG_GPIO_OUT_IDX, false, false);
     }
     return mp_const_none;
@@ -305,7 +306,7 @@ static mp_obj_t esp32_servo_pwm_duty(size_t n_args, const mp_obj_t *args) {
 
     // set
     duty = mp_obj_get_int(args[1]);
-    duty &= ((1 << PWRES)-1);
+    duty &= ((1 << PWRES) - 1);
     duty >>= PWRES - timer_cfg.duty_resolution;
     ledc_set_duty(PWMODE, self->channel, duty);
     ledc_update_duty(PWMODE, self->channel);
@@ -319,11 +320,12 @@ static mp_obj_t esp32_servo_pwm_write_us(mp_obj_t self_in, mp_obj_t _us) {
     esp32_servo_pwm_obj_t *self = MP_OBJ_TO_PTR(self_in);
 
     int us = mp_obj_get_int(_us);
-    if ((us < self->min_us) || (us > self->max_us))
+    if ((us < self->min_us) || (us > self->max_us)) {
         mp_raise_ValueError(MP_ERROR_TEXT("Pulse width out of range"));
-    int duty = (int)((us * 1023)/ 20000);
+    }
+    int duty = (int)((us * 1023) / 20000);
 
-    duty &= ((1 << PWRES)-1);
+    duty &= ((1 << PWRES) - 1);
     duty >>= PWRES - timer_cfg.duty_resolution;
     ledc_set_duty(PWMODE, self->channel, duty);
     ledc_update_duty(PWMODE, self->channel);
@@ -336,15 +338,17 @@ static mp_obj_t esp32_servo_pwm_write_angle(mp_obj_t self_in, mp_obj_t _angle) {
     esp32_servo_pwm_obj_t *self = MP_OBJ_TO_PTR(self_in);
 
     int angle = mp_obj_get_int(_angle);
-    if ((angle < 0) || (angle > self->actuation_range))
+    if ((angle < 0) || (angle > self->actuation_range)) {
         mp_raise_ValueError(MP_ERROR_TEXT("Angle out of range"));
+    }
     int us_range = self->max_us - self->min_us;
     int us = self->min_us + (int)(angle * us_range / self->actuation_range);
-    if ((us < self->min_us) || (us > self->max_us))
+    if ((us < self->min_us) || (us > self->max_us)) {
         mp_raise_ValueError(MP_ERROR_TEXT("Pulse width out of range"));
-    int duty = (int)((us * 1023)/ 20000);
+    }
+    int duty = (int)((us * 1023) / 20000);
 
-    duty &= ((1 << PWRES)-1);
+    duty &= ((1 << PWRES) - 1);
     duty >>= PWRES - timer_cfg.duty_resolution;
     ledc_set_duty(PWMODE, self->channel, duty);
     ledc_update_duty(PWMODE, self->channel);
@@ -397,4 +401,3 @@ const mp_obj_module_t mp_module_servo = {
     .globals = (mp_obj_dict_t*)&machine_servo_module_globals,
 };
 */
-

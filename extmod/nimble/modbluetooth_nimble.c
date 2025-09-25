@@ -394,13 +394,13 @@ static int commmon_gap_event_cb(struct ble_gap_event *event, void *arg) {
     struct ble_gap_conn_desc desc;
 
     switch (event->type) {
-        #if MICROPY_PY_BLUETOOTH_ENABLE_GATT_CLIENT
+    #if MICROPY_PY_BLUETOOTH_ENABLE_GATT_CLIENT
         case BLE_GAP_EVENT_NOTIFY_RX: {
             uint16_t ev = event->notify_rx.indication == 0 ? MP_BLUETOOTH_IRQ_GATTC_NOTIFY : MP_BLUETOOTH_IRQ_GATTC_INDICATE;
             gattc_on_data_available(ev, event->notify_rx.conn_handle, event->notify_rx.attr_handle, event->notify_rx.om);
             return 0;
         }
-        #endif // MICROPY_PY_BLUETOOTH_ENABLE_GATT_CLIENT
+    #endif // MICROPY_PY_BLUETOOTH_ENABLE_GATT_CLIENT
 
         case BLE_GAP_EVENT_CONN_UPDATE: {
             DEBUG_printf("commmon_gap_event_cb: connection update: status=%d\n", event->conn_update.status);

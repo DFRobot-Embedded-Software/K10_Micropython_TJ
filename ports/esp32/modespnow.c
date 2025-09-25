@@ -64,7 +64,7 @@
 
 // Relies on gcc Variadic Macros and Statement Expressions
 #define NEW_TUPLE(...) \
-    ({mp_obj_t _z[] = {__VA_ARGS__}; mp_obj_new_tuple(MP_ARRAY_SIZE(_z), _z); })
+        ({mp_obj_t _z[] = {__VA_ARGS__}; mp_obj_new_tuple(MP_ARRAY_SIZE(_z), _z); })
 
 static const uint8_t ESPNOW_MAGIC = 0x99;
 

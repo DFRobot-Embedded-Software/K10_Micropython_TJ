@@ -90,29 +90,29 @@
 
 // Temporary support for legacy construction of SoftI2C via I2C type.
 #define MP_MACHINE_I2C_CHECK_FOR_LEGACY_SOFTI2C_CONSTRUCTION(n_args, n_kw, all_args) \
-    do { \
-        if (n_args == 0 || all_args[0] == MP_OBJ_NEW_SMALL_INT(-1)) { \
-            mp_print_str(MICROPY_ERROR_PRINTER, "Warning: I2C(-1, ...) is deprecated, use SoftI2C(...) instead\n"); \
-            if (n_args != 0) { \
-                --n_args; \
-                ++all_args; \
+        do { \
+            if (n_args == 0 || all_args[0] == MP_OBJ_NEW_SMALL_INT(-1)) { \
+                mp_print_str(MICROPY_ERROR_PRINTER, "Warning: I2C(-1, ...) is deprecated, use SoftI2C(...) instead\n"); \
+                if (n_args != 0) { \
+                    --n_args; \
+                    ++all_args; \
+                } \
+                return MP_OBJ_TYPE_GET_SLOT(&mp_machine_soft_i2c_type, make_new)(&mp_machine_soft_i2c_type, n_args, n_kw, all_args); \
             } \
-            return MP_OBJ_TYPE_GET_SLOT(&mp_machine_soft_i2c_type, make_new)(&mp_machine_soft_i2c_type, n_args, n_kw, all_args); \
-        } \
-    } while (0)
+        } while (0)
 
 // Temporary support for legacy construction of SoftSPI via SPI type.
 #define MP_MACHINE_SPI_CHECK_FOR_LEGACY_SOFTSPI_CONSTRUCTION(n_args, n_kw, all_args) \
-    do { \
-        if (n_args == 0 || all_args[0] == MP_OBJ_NEW_SMALL_INT(-1)) { \
-            mp_print_str(MICROPY_ERROR_PRINTER, "Warning: SPI(-1, ...) is deprecated, use SoftSPI(...) instead\n"); \
-            if (n_args != 0) { \
-                --n_args; \
-                ++all_args; \
+        do { \
+            if (n_args == 0 || all_args[0] == MP_OBJ_NEW_SMALL_INT(-1)) { \
+                mp_print_str(MICROPY_ERROR_PRINTER, "Warning: SPI(-1, ...) is deprecated, use SoftSPI(...) instead\n"); \
+                if (n_args != 0) { \
+                    --n_args; \
+                    ++all_args; \
+                } \
+                return MP_OBJ_TYPE_GET_SLOT(&mp_machine_soft_spi_type, make_new)(&mp_machine_soft_spi_type, n_args, n_kw, all_args); \
             } \
-            return MP_OBJ_TYPE_GET_SLOT(&mp_machine_soft_spi_type, make_new)(&mp_machine_soft_spi_type, n_args, n_kw, all_args); \
-        } \
-    } while (0)
+        } while (0)
 
 #if MICROPY_PY_MACHINE_I2C || MICROPY_PY_MACHINE_SOFTI2C
 
