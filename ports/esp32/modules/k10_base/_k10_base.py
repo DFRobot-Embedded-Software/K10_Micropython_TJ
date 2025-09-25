@@ -1794,6 +1794,51 @@ class Screen(object):
             print(f"Error in smooth camera display: {e}")
             self.stop_cat_detect()
 '''
+    def deinit(self):
+        """清理Screen对象的所有资源"""
+        print("Screen deinit...")
+        try:
+            # 1. 停止摄像头定时器
+            if hasattr(self, 'camera_timer') and self.camera_timer:
+                self.camera_timer.deinit()
+                self.camera_timer = None
+            
+            # 2. 清理LVGL对象
+            if hasattr(self, 'canvas') and self.canvas:
+                self.canvas = None
+            if hasattr(self, 'img') and self.img:
+                self.img = None
+            if hasattr(self, 'screen') and self.screen:
+                self.screen = None
+            
+            # 3. 清理缓冲区
+            if hasattr(self, 'canvas_buf'):
+                self.canvas_buf = None
+            if hasattr(self, 'img_dsc'):
+                self.img_dsc = None
+            
+            # 4. 清理SPI总线
+            if hasattr(self, 'spi_bus') and self.spi_bus:
+                self.spi_bus.deinit()
+                self.spi_bus = None
+            
+            # 5. 清理显示总线
+            if hasattr(self, 'display_bus') and self.display_bus:
+                self.display_bus = None
+            
+            # 6. 关闭屏幕背光
+            try:
+                myi2c = I2C(0, scl=Pin(48), sda=Pin(47), freq=100000)
+                temp = myi2c.readfrom_mem(0x20, 0x02, 1)
+                myi2c.writeto(0x20, bytearray([0x02, (temp[0] & 0xFE)]))  # 关闭背光
+                myi2c.deinit()
+            except:
+                pass
+            
+            print("Screen deinit completed")
+        except Exception as e:
+            print(f"Error in Screen deinit: {e}")
+
 
 class Wifibase(object):
     def __init__(self):

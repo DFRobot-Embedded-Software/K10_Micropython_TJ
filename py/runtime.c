@@ -45,7 +45,6 @@
 #include "py/builtin.h"
 #include "py/cstack.h"
 #include "py/gc.h"
-#include "py/mphal.h"
 
 #if MICROPY_VFS_ROM && MICROPY_VFS_ROM_IOCTL
 #include "extmod/vfs.h"
@@ -1664,13 +1663,6 @@ NORETURN void m_malloc_fail(size_t num_bytes) {
 #if MICROPY_ERROR_REPORTING == MICROPY_ERROR_REPORTING_NONE
 
 NORETURN void mp_raise_type(const mp_obj_type_t *exc_type) {
-    // 如果是KeyboardInterrupt，先进行资源清理
-    if (exc_type == &mp_type_KeyboardInterrupt) {
-        // 调用ESP32特定的资源清理函数（弱符号，如果不存在则不会链接错误）
-        extern void mp_cleanup_resources_on_interrupt(void);
-        mp_cleanup_resources_on_interrupt();
-    }
-    
     nlr_raise(mp_obj_new_exception(exc_type));
 }
 
@@ -1689,13 +1681,6 @@ NORETURN void mp_raise_NotImplementedError_no_msg(void) {
 #else
 
 NORETURN void mp_raise_msg(const mp_obj_type_t *exc_type, mp_rom_error_text_t msg) {
-    // 如果是KeyboardInterrupt，先进行资源清理
-    if (exc_type == &mp_type_KeyboardInterrupt) {
-        // 调用ESP32特定的资源清理函数（弱符号，如果不存在则不会链接错误）
-        extern void mp_cleanup_resources_on_interrupt(void);
-        mp_cleanup_resources_on_interrupt();
-    }
-    
     if (msg == NULL) {
         nlr_raise(mp_obj_new_exception(exc_type));
     } else {
