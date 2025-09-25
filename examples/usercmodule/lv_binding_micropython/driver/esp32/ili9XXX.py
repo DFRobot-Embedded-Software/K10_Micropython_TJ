@@ -379,8 +379,8 @@ class ili9XXX:
 
         # Prevent callbacks to lvgl, which refer to the buffers we are about to delete
 
-        if lv_utils.event_loop.is_running():
-            self.event_loop.deinit()
+        #if lv_utils.event_loop.is_running():
+            #self.event_loop.deinit()
 
         if self.disp_drv:
             self.disp_drv.delete()

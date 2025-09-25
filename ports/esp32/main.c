@@ -70,6 +70,7 @@
 #include "modespnow.h"
 #endif
 
+
 // MicroPython runs as a task under FreeRTOS
 #define MP_TASK_PRIORITY        (ESP_TASK_PRIO_MIN + 1)
 
@@ -200,6 +201,7 @@ soft_reset_exit:
     // TODO: machine_rmt_deinit_all();
     machine_pins_deinit();
     machine_deinit();
+    
     #if MICROPY_PY_SOCKET_EVENTS
     socket_events_deinit();
     #endif
