@@ -227,6 +227,118 @@ void app_main(void) {
     
 }
 
+// 各个模块的清理函数声明和实现
+__attribute__((weak)) void camera_deinit(void) {
+    // 调用ESP32摄像头清理函数
+    extern esp_err_t esp_camera_deinit(void);
+    esp_camera_deinit();
+}
+
+__attribute__((weak)) void screen_deinit(void) {
+    // 清理屏幕相关资源
+    // 这里可以添加屏幕清理逻辑，比如关闭SPI、清理缓冲区等
+}
+
+__attribute__((weak)) void sensors_deinit(void) {
+    // 清理传感器相关资源
+    // 这里可以添加传感器清理逻辑，比如关闭I2C、清理中断等
+}
+
+__attribute__((weak)) void rgb_deinit(void) {
+    // 清理RGB LED相关资源
+    // 这里可以添加RGB LED清理逻辑，比如关闭PWM、清理定时器等
+}
+
+__attribute__((weak)) void button_deinit(void) {
+    // 清理按键相关资源
+    // 这里可以添加按键清理逻辑，比如关闭GPIO中断等
+}
+
+__attribute__((weak)) void audio_deinit(void) {
+    // 清理音频相关资源
+    // 这里可以添加音频清理逻辑，比如关闭I2S、清理DMA等
+}
+
+__attribute__((weak)) void i2c_deinit(void) {
+    // 清理I2C总线相关资源
+    // 这里可以添加I2C清理逻辑，比如关闭I2C总线等
+}
+
+__attribute__((weak)) void spi_deinit(void) {
+    // 清理SPI总线相关资源
+    // 这里可以添加SPI清理逻辑，比如关闭SPI总线等
+}
+
+// 自定义资源清理函数，在Ctrl+C时调用
+__attribute__((weak)) void mp_cleanup_resources_on_interrupt(void) {
+    mp_hal_stdout_tx_str("\r\n[MAIN] 开始清理系统资源...\r\n");
+    
+    // 1. 清理所有定时器
+    mp_hal_stdout_tx_str("清理定时器...\r\n");
+    machine_timer_deinit_all();
+    
+    // 2. 清理PWM
+    mp_hal_stdout_tx_str("清理PWM...\r\n");
+    machine_pwm_deinit_all();
+    
+    // 3. 清理引脚中断
+    mp_hal_stdout_tx_str("清理引脚中断...\r\n");
+    machine_pins_deinit();
+    
+    // 4. 清理摄像头资源
+    mp_hal_stdout_tx_str("清理摄像头...\r\n");
+    extern void camera_deinit(void);
+    camera_deinit();
+    
+    // 5. 清理屏幕资源
+    mp_hal_stdout_tx_str("清理屏幕...\r\n");
+    extern void screen_deinit(void);
+    screen_deinit();
+    
+    // 6. 清理传感器资源
+    mp_hal_stdout_tx_str("清理传感器...\r\n");
+    extern void sensors_deinit(void);
+    sensors_deinit();
+    
+    // 7. 清理RGB LED
+    mp_hal_stdout_tx_str("清理RGB LED...\r\n");
+    extern void rgb_deinit(void);
+    rgb_deinit();
+    
+    // 8. 清理按键中断
+    mp_hal_stdout_tx_str("清理按键中断...\r\n");
+    extern void button_deinit(void);
+    button_deinit();
+    
+    // 9. 清理音频资源
+    mp_hal_stdout_tx_str("清理音频资源...\r\n");
+    extern void audio_deinit(void);
+    audio_deinit();
+    
+    // 10. 清理I2C总线
+    mp_hal_stdout_tx_str("清理I2C总线...\r\n");
+    extern void i2c_deinit(void);
+    i2c_deinit();
+    
+    // 11. 清理SPI总线
+    mp_hal_stdout_tx_str("清理SPI总线...\r\n");
+    extern void spi_deinit(void);
+    spi_deinit();
+    
+    // 12. 如果有自定义的AI系统，也进行清理
+    #ifdef MICROPY_K10_AI_ENABLED
+    mp_hal_stdout_tx_str("清理AI系统...\r\n");
+    extern void mp_deinit_ai(void);
+    mp_deinit_ai();
+    #endif
+    
+    // 13. 清理其他可能的资源
+    mp_hal_stdout_tx_str("执行垃圾回收...\r\n");
+    gc_collect();
+    
+    mp_hal_stdout_tx_str("资源清理完成\r\n");
+}
+
 void nlr_jump_fail(void *val) {
     printf("NLR jump failed, val=%p\n", val);
     esp_restart();
