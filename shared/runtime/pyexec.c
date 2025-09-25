@@ -702,16 +702,16 @@ int pyexec_frozen_module(const char *name, bool allow_keyboard_interrupt) {
     mp_uint_t exec_flags = allow_keyboard_interrupt ? 0 : EXEC_FLAG_NO_INTERRUPT;
 
     switch (frozen_type) {
-        #if MICROPY_MODULE_FROZEN_STR
+    #if MICROPY_MODULE_FROZEN_STR
         case MP_FROZEN_STR:
             return parse_compile_execute(frozen_data, MP_PARSE_FILE_INPUT, exec_flags);
-        #endif
+    #endif
 
-        #if MICROPY_MODULE_FROZEN_MPY
+    #if MICROPY_MODULE_FROZEN_MPY
         case MP_FROZEN_MPY:
             return parse_compile_execute(frozen_data, MP_PARSE_FILE_INPUT, exec_flags |
                 EXEC_FLAG_SOURCE_IS_RAW_CODE);
-        #endif
+    #endif
 
         default:
             mp_printf(MICROPY_ERROR_PRINTER, "could not find module '%s'\n", name);

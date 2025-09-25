@@ -81,9 +81,9 @@ static const mp_obj_type_t btree_type;
 #endif
 
 #define CHECK_ERROR(res) \
-    if (res == RET_ERROR) { \
-        mp_raise_OSError(errno); \
-    }
+        if (res == RET_ERROR) { \
+            mp_raise_OSError(errno); \
+        }
 
 void __dbpanic(DB *db) {
     mp_printf(&mp_plat_print, "__dbpanic(%p)\n", db);

@@ -80,13 +80,13 @@ static const mp_rom_obj_tuple_t mp_sys_implementation_version_info_obj = {
 };
 static const MP_DEFINE_STR_OBJ(mp_sys_implementation_machine_obj, MICROPY_BANNER_MACHINE);
 #define SYS_IMPLEMENTATION_ELEMS_BASE \
-    MP_ROM_QSTR(MP_QSTR_micropython), \
-    MP_ROM_PTR(&mp_sys_implementation_version_info_obj), \
-    MP_ROM_PTR(&mp_sys_implementation_machine_obj)
+        MP_ROM_QSTR(MP_QSTR_micropython), \
+        MP_ROM_PTR(&mp_sys_implementation_version_info_obj), \
+        MP_ROM_PTR(&mp_sys_implementation_machine_obj)
 
 #if MICROPY_PERSISTENT_CODE_LOAD
 #define SYS_IMPLEMENTATION_ELEMS__MPY \
-    , MP_ROM_INT(MPY_FILE_HEADER_INT)
+        , MP_ROM_INT(MPY_FILE_HEADER_INT)
 #else
 #define SYS_IMPLEMENTATION_ELEMS__MPY
 #endif
@@ -97,7 +97,7 @@ static const MP_DEFINE_STR_OBJ(mp_sys_implementation_machine_obj, MICROPY_BANNER
 static const MP_DEFINE_STR_OBJ(mp_sys_implementation__build_obj, MICROPY_BOARD_BUILD_NAME);
 #define MICROPY_BOARD_BUILD (1)
 #define SYS_IMPLEMENTATION_ELEMS__BUILD \
-    , MP_ROM_PTR(&mp_sys_implementation__build_obj)
+        , MP_ROM_PTR(&mp_sys_implementation__build_obj)
 #else
 #define MICROPY_BOARD_BUILD (0)
 #define SYS_IMPLEMENTATION_ELEMS__BUILD
@@ -105,7 +105,7 @@ static const MP_DEFINE_STR_OBJ(mp_sys_implementation__build_obj, MICROPY_BOARD_B
 
 #if MICROPY_PREVIEW_VERSION_2
 #define SYS_IMPLEMENTATION_ELEMS__V2 \
-    , MP_ROM_TRUE
+        , MP_ROM_TRUE
 #else
 #define SYS_IMPLEMENTATION_ELEMS__V2
 #endif

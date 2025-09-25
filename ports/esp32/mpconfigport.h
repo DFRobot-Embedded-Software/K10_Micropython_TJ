@@ -287,14 +287,14 @@ void *esp_native_code_commit(void *, size_t, void *);
 
 #if MICROPY_PY_THREAD
 #define MICROPY_EVENT_POLL_HOOK \
-    do { \
-        extern void mp_handle_pending(bool); \
-        mp_handle_pending(true); \
-        MICROPY_PY_SOCKET_EVENTS_HANDLER \
-        MP_THREAD_GIL_EXIT(); \
-        ulTaskNotifyTake(pdFALSE, 1); \
-        MP_THREAD_GIL_ENTER(); \
-    } while (0);
+        do { \
+            extern void mp_handle_pending(bool); \
+            mp_handle_pending(true); \
+            MICROPY_PY_SOCKET_EVENTS_HANDLER \
+            MP_THREAD_GIL_EXIT(); \
+            ulTaskNotifyTake(pdFALSE, 1); \
+            MP_THREAD_GIL_ENTER(); \
+        } while (0);
 #else
 #if CONFIG_IDF_TARGET_ARCH_RISCV
 #define MICROPY_PY_WAIT_FOR_INTERRUPT asm volatile ("wfi\n")
@@ -302,12 +302,12 @@ void *esp_native_code_commit(void *, size_t, void *);
 #define MICROPY_PY_WAIT_FOR_INTERRUPT asm volatile ("waiti 0\n")
 #endif
 #define MICROPY_EVENT_POLL_HOOK \
-    do { \
-        extern void mp_handle_pending(bool); \
-        mp_handle_pending(true); \
-        MICROPY_PY_SOCKET_EVENTS_HANDLER \
-            MICROPY_PY_WAIT_FOR_INTERRUPT; \
-    } while (0);
+        do { \
+            extern void mp_handle_pending(bool); \
+            mp_handle_pending(true); \
+            MICROPY_PY_SOCKET_EVENTS_HANDLER \
+                MICROPY_PY_WAIT_FOR_INTERRUPT; \
+        } while (0);
 #endif
 
 // Functions that should go in IRAM
@@ -394,6 +394,4 @@ void boardctrl_startup(void);
 
 // 添加自定义 VM 全局成员
 #define MP_STATE_VM_CUSTOM_MEMBERS \
-    mp_obj_t camera_obj;
-
-
+        mp_obj_t camera_obj;

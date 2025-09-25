@@ -257,28 +257,46 @@ class Button(object):
         self._was_pressed = False
 
         #初始化按钮状态
-        self._last_value = self._pin.value()
+        try:
+            self._last_value = self._pin.value() if self._pin is not None else None
+        except Exception as e:
+            # 初始化读取失败时，保持为 None，后续检查会跳过
+            self._last_value = None
         #配置中断引脚
-        if self._id >= 50:
-            #IO扩展芯片
-            pass
-        else:
-            #原生IO口
-            self._pin.irq(trigger=Pin.IRQ_FALLING, handler = self._irq_handler)
-    def _irq_handler(self, pin):
-        _irq_falling = True if pin.value() == self._press_level else False
-        if self._pin.value() == (self._press_level if _irq_falling else self._release_level):
-            if _irq_falling:
-                if self.event_pressed is not None:
-                    schedule(self.event_pressed, self._pin)
-                self._was_pressed = True
-                if(self._pressed_count < 100):
-                    self._pressed_count += 1
+        if self._pin is not None:
+            if self._id >= 50:
+                #IO扩展芯片
+                pass
             else:
-                if self.event_released is not None:
-                    schedule(self.event_released, self._pin)
+                #原生IO口
+                try:
+                    self._pin.irq(trigger=Pin.IRQ_FALLING, handler = self._irq_handler)
+                except Exception as e:
+                    pass
+    def _irq_handler(self, pin):
+        if self._pin is None:
+            return
+        try:
+            _irq_falling = True if pin.value() == self._press_level else False
+            if self._pin.value() == (self._press_level if _irq_falling else self._release_level):
+                if _irq_falling:
+                    if self.event_pressed is not None:
+                        schedule(self.event_pressed, self._pin)
+                    self._was_pressed = True
+                    if(self._pressed_count < 100):
+                        self._pressed_count += 1
+                else:
+                    if self.event_released is not None:
+                        schedule(self.event_released, self._pin)
+        except Exception as e:
+            pass
     def check_state(self):
-        _current_value = self._pin.value()
+        if self._pin is None:
+            return
+        try:
+            _current_value = self._pin.value()
+        except Exception as e:
+            return
         #按下事件
         if _current_value == self._press_level and self._last_value != self._press_level:
             if self.event_pressed is not None:
@@ -299,10 +317,15 @@ class Button(object):
         self._last_value = _current_value
 
     def is_pressed(self):
-        if self._pin.value() == self._press_level:
-            return True
-        else:
+        if self._pin is None:
             return False
+        try:
+            if self._pin.value() == self._press_level:
+                return True
+            else:
+                return False
+        except Exception:
+            return True
         
     def was_pressed(self):
         #返回按键是否按下过,并清除按键按下状态
@@ -802,11 +825,11 @@ K10扬声器类
 '''
 class Speaker(object):
     def __init__(self):
-        print("init speaker\n")
+        #print("init speaker\n")
         self.i2s = I2S(1,sck = 0,ws=38, sd= 45, mode=I2S.TX, bits=32, format=I2S.MONO, rate=16000, ibuf=20000)
         self.i2s.deinit()
         self._i2c = k10_i2c
-        print("init done\n")
+        #print("init done\n")
         self.buzzMelody = 2
         self.playTone = 2
         self.freqTable = [ 31, 33, 35, 37, 39, 41, 44, 46, 49, 52, 55, 58, 62, 65, 69, 73, 78, 82, 87, 92, 98, 104, 110, 
@@ -1262,6 +1285,18 @@ class Screen(object):
 
     def show_camera(self,camera):
         self.camera_timer = lv.timer_create(lambda t: self.show_camera_img(camera.camera_capture()), 1, None)
+    
+    def deinit(self):
+        if self.camera_timer:
+            self.camera_timer.delete()
+            self.camera_timer = None
+        lv.deinit()
+        self.display_bus.deinit()
+        self.spi_bus.deinit()
+        self.img.deinit()
+        self.canvas.deinit()
+        self.layer.deinit()
+        self.area.deinit()
     '''
     def show_cat_detect(self, camera):
         import time

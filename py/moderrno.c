@@ -36,28 +36,28 @@
 // specific port's needs.  If it's not defined then we provide a default.
 #ifndef MICROPY_PY_ERRNO_LIST
 #define MICROPY_PY_ERRNO_LIST \
-    X(EPERM) \
-    X(ENOENT) \
-    X(EIO) \
-    X(EBADF) \
-    X(EAGAIN) \
-    X(ENOMEM) \
-    X(EACCES) \
-    X(EEXIST) \
-    X(ENODEV) \
-    X(EISDIR) \
-    X(EINVAL) \
-    X(EOPNOTSUPP) \
-    X(EADDRINUSE) \
-    X(ECONNABORTED) \
-    X(ECONNRESET) \
-    X(ENOBUFS) \
-    X(ENOTCONN) \
-    X(ETIMEDOUT) \
-    X(ECONNREFUSED) \
-    X(EHOSTUNREACH) \
-    X(EALREADY) \
-    X(EINPROGRESS) \
+        X(EPERM) \
+        X(ENOENT) \
+        X(EIO) \
+        X(EBADF) \
+        X(EAGAIN) \
+        X(ENOMEM) \
+        X(EACCES) \
+        X(EEXIST) \
+        X(ENODEV) \
+        X(EISDIR) \
+        X(EINVAL) \
+        X(EOPNOTSUPP) \
+        X(EADDRINUSE) \
+        X(ECONNABORTED) \
+        X(ECONNRESET) \
+        X(ENOBUFS) \
+        X(ENOTCONN) \
+        X(ETIMEDOUT) \
+        X(ECONNREFUSED) \
+        X(EHOSTUNREACH) \
+        X(EALREADY) \
+        X(EINPROGRESS) \
 
 #endif
 
