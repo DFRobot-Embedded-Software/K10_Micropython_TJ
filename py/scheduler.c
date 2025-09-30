@@ -49,9 +49,7 @@ void MICROPY_WRAP_MP_SCHED_EXCEPTION(mp_sched_exception)(mp_obj_t exc) {
 void MICROPY_WRAP_MP_SCHED_KEYBOARD_INTERRUPT(mp_sched_keyboard_interrupt)(void) {
     // 在调度KeyboardInterrupt之前进行资源清理
     extern void mp_cleanup_resources_on_interrupt(void);
-    mp_hal_stdout_tx_str("[SCHEDULER] 准备调用清理函数...\r\n");
     mp_cleanup_resources_on_interrupt();
-    mp_hal_stdout_tx_str("[SCHEDULER] 清理函数调用完成\r\n");
     
     MP_STATE_VM(mp_kbd_exception).traceback_data = NULL;
     mp_sched_exception(MP_OBJ_FROM_PTR(&MP_STATE_VM(mp_kbd_exception)));

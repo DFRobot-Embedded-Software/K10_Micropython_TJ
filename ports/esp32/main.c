@@ -227,36 +227,50 @@ void app_main(void) {
     
 }
 
-// 自定义资源清理函数，在Ctrl+C时调用
-void mp_cleanup_resources_on_interrupt(void) {
-    mp_hal_stdout_tx_str("开始清理系统资源...\n");
-    
-    // 1. 清理所有定时器
-    mp_hal_stdout_tx_str("清理定时器...\n");
-    machine_timer_deinit_all();
-    
-    // 2. 清理PWM
-    mp_hal_stdout_tx_str("清理PWM...\n");
-    machine_pwm_deinit_all();
-    
-    // 3. 清理引脚中断
-    mp_hal_stdout_tx_str("清理引脚中断...\n");
-    machine_pins_deinit();
-    
-    // 4. 如果有自定义的AI系统，也进行清理
-    #ifdef MICROPY_K10_AI_ENABLED
-    mp_hal_stdout_tx_str("清理AI系统...\n");
-    extern void mp_deinit_ai(void);
-    mp_deinit_ai();
-    #endif
-    
-    // 5. 清理其他可能的资源
-    mp_hal_stdout_tx_str("执行垃圾回收...\n");
-    gc_collect();
-    
-    mp_hal_stdout_tx_str("资源清理完成\n");
-}
+#include "py/nlr.h"
+#include "py/mphal.h"
+#include "shared/runtime/pyexec.h"
+#include "py/mpstate.h"
+#include "py/builtin.h"
 
+void mp_cleanup_resources_on_interrupt(void) {
+
+    // 1) 先禁用所有中断，防止清理过程中再被回调打断
+    // 禁用定时器中断
+    machine_timer_deinit_all();
+    mp_thread_deinit();
+    machine_pwm_deinit_all();
+    machine_pins_deinit();
+    // 2) 安全执行Python清理代码（禁用中断）
+    if (mp_import_stat("clean.py") == MP_IMPORT_STAT_FILE) {
+        
+        // 使用try-catch机制安全执行Python代码
+        nlr_buf_t nlr;
+        if (nlr_push(&nlr) == 0) {
+            // 禁用KeyboardInterrupt，然后执行Python代码
+            mp_hal_set_interrupt_char(-1); // 禁用KeyboardInterrupt
+            
+            // 执行Python文件
+            pyexec_file("clean.py");
+            
+            // 恢复中断设置（使用默认值3，即Ctrl+C）
+            mp_hal_set_interrupt_char(3);
+            
+            nlr_pop();
+        } else {
+            // 捕获任何异常，包括KeyboardInterrupt
+            // 不重新抛出异常，避免干扰KeyboardInterrupt处理
+        }
+    }
+    machine_timer_deinit_all();
+    //vTaskDelay(100);  // 增加延迟时间，确保所有中断都完成
+    // 2) 清理其他硬件资源
+    mp_thread_deinit();
+    machine_pwm_deinit_all();
+    machine_pins_deinit();
+    machine_deinit();
+    
+}
 void nlr_jump_fail(void *val) {
     printf("NLR jump failed, val=%p\n", val);
     esp_restart();
