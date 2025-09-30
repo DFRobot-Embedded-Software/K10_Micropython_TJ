@@ -41,7 +41,7 @@
 
 // This is the same as cyw43_pm_value but as a macro, to make it a true constant.
 #define CYW43_PM_VALUE(pm_mode, pm2_sleep_ret_ms, li_beacon_period, li_dtim_period, li_assoc) \
-    ((li_assoc) << 20 \
+        ((li_assoc) << 20 \
         | (li_dtim_period) << 16 \
         | (li_beacon_period) << 12 \
         | ((pm2_sleep_ret_ms) / 10) << 4 \

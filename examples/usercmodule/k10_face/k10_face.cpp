@@ -150,25 +150,21 @@ extern "C" void cleanup_ai_resources() {
 
 // 安全的清理函数（不删除I2C驱动）
 extern "C" void cleanup_ai_resources_safe() {
-    printf("开始清理C++资源...\n");
     
     if (g_aligned_buffer) {
         heap_caps_free(g_aligned_buffer);
         g_aligned_buffer = NULL;
         g_buffer_size = 0;
         g_buffer_initialized = false;
-        printf("已清理对齐内存缓冲区\n");
     }
     
     if (ai_inference_mutex) {
         vSemaphoreDelete(ai_inference_mutex);
         ai_inference_mutex = NULL;
-        printf("已清理互斥锁\n");
     }
     
     // 清理摄像头队列
     if (camera_queue != NULL) {
-        printf("开始清理摄像头队列...\n");
         // 清空队列中剩余的帧
         camera_fb_t *frame = NULL;
         int frame_count = 0;
@@ -178,19 +174,15 @@ extern "C" void cleanup_ai_resources_safe() {
                 frame_count++;
             }
         }
-        printf("已清理 %d 个剩余帧\n", frame_count);
         vQueueDelete(camera_queue);
         camera_queue = NULL;
-        printf("已删除摄像头队列\n");
     }
     
-    printf("C++资源清理完成\n");
     // 注意：不删除I2C驱动，避免影响其他功能
 }
 
 // 强制清理函数（不等待，直接删除）
 extern "C" void cleanup_ai_resources_force() {
-    printf("开始强制清理C++资源...\n");
     
     // 强制清理内存缓冲区
     if (g_aligned_buffer) {
@@ -198,25 +190,20 @@ extern "C" void cleanup_ai_resources_force() {
         g_aligned_buffer = NULL;
         g_buffer_size = 0;
         g_buffer_initialized = false;
-        printf("已强制清理对齐内存缓冲区\n");
     }
     
     // 强制清理互斥锁
     if (ai_inference_mutex) {
         vSemaphoreDelete(ai_inference_mutex);
         ai_inference_mutex = NULL;
-        printf("已强制清理互斥锁\n");
     }
     
     // 强制清理摄像头队列（不等待，直接删除）
     if (camera_queue != NULL) {
-        printf("强制删除摄像头队列...\n");
         vQueueDelete(camera_queue);
         camera_queue = NULL;
-        printf("已强制删除摄像头队列\n");
     }
     
-    printf("C++资源强制清理完成\n");
 }
 
 extern "C" int register_face_flag;
@@ -383,77 +370,100 @@ extern "C" __attribute__((weak))  void face_recognize_start_task(void* arg) {
         }
         // 使用较短的超时时间，以便能够及时检查退出标志
         if(xQueueReceive(camera_queue, &frame, pdMS_TO_TICKS(100)) == pdPASS) {
-            latency.start();
-            std::list<dl::detect::result_t> &detect_candidates =detectorFace.infer((uint16_t*)frame->buf, {(int)frame->height, (int)frame->width, 3});
-            std::list<dl::detect::result_t> &detect_results=detectorFace2.infer((uint16_t*)frame->buf, {(int)frame->height, (int)frame->width, 3}, detect_candidates);
-            latency.end();
-            if (detect_results.size() > 0) {
-                g_ai_data.face_flag = true;
-                std::list<dl::detect::result_t>::iterator first_result = detect_results.begin();
-                if (first_result != detect_results.end()) {
-                    g_ai_data.face_detect.face_frame_length = (int)first_result->box[2] - (int)first_result->box[0];
-                    g_ai_data.face_detect.face_frame_width = (int)first_result->box[3] - (int)first_result->box[1];
-                    
-                    // 安全地访问 keypoint 数组
-                    if (!first_result->keypoint.empty() && first_result->keypoint.size() >= 10) {
-                        g_ai_data.face_detect.face_left_eys[0] = (int)first_result->keypoint[0];
-                        g_ai_data.face_detect.face_left_eys[1] = (int)first_result->keypoint[1];
-                        g_ai_data.face_detect.face_right_eys[0] = (int)first_result->keypoint[6];
-                        g_ai_data.face_detect.face_right_eys[1] = (int)first_result->keypoint[7];
-                        g_ai_data.face_detect.face_nose[0] = (int)first_result->keypoint[4];
-                        g_ai_data.face_detect.face_nose[1] = (int)first_result->keypoint[5];
-                        g_ai_data.face_detect.face_left_mouth[0] = (int)first_result->keypoint[2];
-                        g_ai_data.face_detect.face_left_mouth[1] = (int)first_result->keypoint[3];
-                        g_ai_data.face_detect.face_right_mouth[0] = (int)first_result->keypoint[8];
-                        g_ai_data.face_detect.face_right_mouth[1] = (int)first_result->keypoint[9];
-                    } else {
-                        // 如果关键点数据无效，设置为默认值
-                        memset(g_ai_data.face_detect.face_left_eys, 0, sizeof(g_ai_data.face_detect.face_left_eys));
-                        memset(g_ai_data.face_detect.face_right_eys, 0, sizeof(g_ai_data.face_detect.face_right_eys));
-                        memset(g_ai_data.face_detect.face_nose, 0, sizeof(g_ai_data.face_detect.face_nose));
-                        memset(g_ai_data.face_detect.face_left_mouth, 0, sizeof(g_ai_data.face_detect.face_left_mouth));
-                        memset(g_ai_data.face_detect.face_right_mouth, 0, sizeof(g_ai_data.face_detect.face_right_mouth));
-                    }
+            try {
+                // 基本帧验证已在上方完成，这里进一步校验尺寸以确保 RGB565 (2 bytes per pixel)
+                size_t required_size = (size_t)frame->width * (size_t)frame->height * 2;
+                if ((size_t)frame->len < required_size) {
+                    esp_camera_fb_return(frame);
+                    g_ai_data.face_flag = false;
+                    ai_push_result(&g_ai_data);
+                    continue;
                 }
-                
-                // 人脸注册
-                if(register_face_flag == 1){
-                    // 检查是否有有效的检测结果和关键点
-                    if (!detect_results.empty() && !detect_results.front().keypoint.empty()) {
-                        recognizer->enroll_id((uint16_t *)frame->buf, {(int)frame->height, (int)frame->width, 3}, detect_results.front().keypoint, "",true);
-                    }
-                    register_face_flag = 0;
+
+                // 使用对齐缓冲区承载推理输入，避免直接用DMA帧
+                if (!init_aligned_buffer(required_size)) {
+                    esp_camera_fb_return(frame);
+                    g_ai_data.face_flag = false;
+                    ai_push_result(&g_ai_data);
+                    continue;
                 }
-                // 人脸识别（自动识别或手动触发）
-                if(recognize_face_flag == 1 ){
-                    // 检查是否有有效的检测结果和关键点
-                    if (!detect_results.empty() && !detect_results.front().keypoint.empty()) {
-                        recognize_result = recognizer->recognize((uint16_t *)frame->buf, {(int)frame->height, (int)frame->width, 3}, detect_results.front().keypoint);
-                        g_ai_data.face_detect.face_id = recognize_result.id;
-                    } else {
-                        g_ai_data.face_detect.face_id = -1;
+                memcpy(g_aligned_buffer, frame->buf, required_size);
+
+                latency.start();
+                std::list<dl::detect::result_t> &detect_candidates = detectorFace.infer((uint16_t*)g_aligned_buffer, {(int)frame->height, (int)frame->width, 3});
+                std::list<dl::detect::result_t> &detect_results = detectorFace2.infer((uint16_t*)g_aligned_buffer, {(int)frame->height, (int)frame->width, 3}, detect_candidates);
+                latency.end();
+                if (detect_results.size() > 0) {
+                    g_ai_data.face_flag = true;
+                    std::list<dl::detect::result_t>::iterator first_result = detect_results.begin();
+                    if (first_result != detect_results.end()) {
+                        g_ai_data.face_detect.face_frame_length = (int)first_result->box[2] - (int)first_result->box[0];
+                        g_ai_data.face_detect.face_frame_width = (int)first_result->box[3] - (int)first_result->box[1];
+
+                        // 安全地访问 keypoint 数组
+                        if (!first_result->keypoint.empty() && first_result->keypoint.size() >= 10) {
+                            g_ai_data.face_detect.face_left_eys[0] = (int)first_result->keypoint[0];
+                            g_ai_data.face_detect.face_left_eys[1] = (int)first_result->keypoint[1];
+                            g_ai_data.face_detect.face_right_eys[0] = (int)first_result->keypoint[6];
+                            g_ai_data.face_detect.face_right_eys[1] = (int)first_result->keypoint[7];
+                            g_ai_data.face_detect.face_nose[0] = (int)first_result->keypoint[4];
+                            g_ai_data.face_detect.face_nose[1] = (int)first_result->keypoint[5];
+                            g_ai_data.face_detect.face_left_mouth[0] = (int)first_result->keypoint[2];
+                            g_ai_data.face_detect.face_left_mouth[1] = (int)first_result->keypoint[3];
+                            g_ai_data.face_detect.face_right_mouth[0] = (int)first_result->keypoint[8];
+                            g_ai_data.face_detect.face_right_mouth[1] = (int)first_result->keypoint[9];
+                        } else {
+                            // 如果关键点数据无效，设置为默认值
+                            memset(g_ai_data.face_detect.face_left_eys, 0, sizeof(g_ai_data.face_detect.face_left_eys));
+                            memset(g_ai_data.face_detect.face_right_eys, 0, sizeof(g_ai_data.face_detect.face_right_eys));
+                            memset(g_ai_data.face_detect.face_nose, 0, sizeof(g_ai_data.face_detect.face_nose));
+                            memset(g_ai_data.face_detect.face_left_mouth, 0, sizeof(g_ai_data.face_detect.face_left_mouth));
+                            memset(g_ai_data.face_detect.face_right_mouth, 0, sizeof(g_ai_data.face_detect.face_right_mouth));
+                        }
                     }
-                    recognize_face_flag = 0;
+
+                    // 人脸注册
+                    if(register_face_flag == 1){
+                        if (!detect_results.empty() && !detect_results.front().keypoint.empty()) {
+                            recognizer->enroll_id((uint16_t *)g_aligned_buffer, {(int)frame->height, (int)frame->width, 3}, detect_results.front().keypoint, "", true);
+                        }
+                        register_face_flag = 0;
+                    }
+                    // 人脸识别（自动识别或手动触发）
+                    if(recognize_face_flag == 1 ){
+                        if (!detect_results.empty() && !detect_results.front().keypoint.empty()) {
+                            recognize_result = recognizer->recognize((uint16_t *)g_aligned_buffer, {(int)frame->height, (int)frame->width, 3}, detect_results.front().keypoint);
+                            g_ai_data.face_detect.face_id = recognize_result.id;
+                        } else {
+                            g_ai_data.face_detect.face_id = -1;
+                        }
+                        recognize_face_flag = 0;
+                    }
+
+                    // 画框仍在原始帧上，便于显示链路复用
+                    draw_detection_result((uint16_t*)frame->buf, (int)frame->height, (int)frame->width, detect_results);
+                } else {
+                    g_ai_data.face_flag = false;
+                    g_ai_data.face_detect.face_id = -1;
                 }
-                draw_detection_result((uint16_t*)frame->buf, (int)frame->height, (int)frame->width, detect_results);
-               
-            } else {
+
+                ai_push_result(&g_ai_data);
+                camera_push_result(frame);
+            } catch (...) {
+                if (frame) {
+                    esp_camera_fb_return(frame);
+                }
                 g_ai_data.face_flag = false;
                 g_ai_data.face_detect.face_id = -1;
+                ai_push_result(&g_ai_data);
             }
-                
-            ai_push_result(&g_ai_data);
-            camera_push_result(frame);
-        
         }
-        vTaskDelay(pdMS_TO_TICKS(1)); // 增加延时，避免过度占用CPU
+        vTaskDelay(pdMS_TO_TICKS(10)); // 与猫脸任务保持一致
     }
         
     free_camera_flag = 1;
     vTaskDelete(NULL);
 }
-
-
 
 
 extern "C" __attribute__((weak)) void cat_detect_task(void* arg) {
@@ -542,6 +552,8 @@ extern "C" __attribute__((weak)) void code_scanner_task(void* arg) {
     init_ai_data(&g_ai_data);
 
     camera_fb_t *frame = NULL;
+    // 扫描器创建一次复用，避免每帧创建/销毁导致碎片与开销
+    static esp_image_scanner_t *esp_scn = NULL;
     while (1) {
         if (free_ai_flag == 1) {
             break;
@@ -556,27 +568,55 @@ extern "C" __attribute__((weak)) void code_scanner_task(void* arg) {
             }
             
             try {
-                esp_image_scanner_t *esp_scn = esp_code_scanner_create();
-                if (!esp_scn) {
+                // 每帧创建与销毁，保留“复制数据”以避免悬空指针
+                esp_image_scanner_t *esp_scn_local = esp_code_scanner_create();
+                if (!esp_scn_local) {
                     esp_camera_fb_return(frame);
+                    vTaskDelay(pdMS_TO_TICKS(50));
                     continue;
                 }
-                
+
                 esp_code_scanner_config_t config = {ESP_CODE_SCANNER_MODE_FAST, ESP_CODE_SCANNER_IMAGE_RGB565, frame->width, frame->height};
-                esp_code_scanner_set_config(esp_scn, config);
-                int decoded_num = esp_code_scanner_scan_image(esp_scn, (uint8_t *)frame->buf);
-                if(decoded_num){
-                    esp_code_scanner_symbol_t result = esp_code_scanner_result(esp_scn);
-                    g_ai_data.code_data = result.data;
-                    g_ai_data.code_flag = true;
-                }else{
-                    g_ai_data.code_data = NULL;
+                esp_code_scanner_set_config(esp_scn_local, config);
+
+                int decoded_num = esp_code_scanner_scan_image(esp_scn_local, (uint8_t *)frame->buf);
+                if (decoded_num) {
+                    esp_code_scanner_symbol_t result = esp_code_scanner_result(esp_scn_local);
+                    // 复制结果到自管缓冲，避免悬空指针
+                    if (g_ai_data.code_data) {
+                        free((void*)g_ai_data.code_data);
+                        g_ai_data.code_data = NULL;
+                    }
+                    if (result.data) {
+                        size_t len = strlen((const char*)result.data);
+                        char *buf = (char*)malloc(len + 1);
+                        if (buf) {
+                            memcpy(buf, result.data, len);
+                            buf[len] = '\0';
+                            g_ai_data.code_data = buf;
+                            g_ai_data.code_flag = true;
+                        } else {
+                            g_ai_data.code_data = NULL;
+                            g_ai_data.code_flag = false;
+                        }
+                    } else {
+                        g_ai_data.code_data = NULL;
+                        g_ai_data.code_flag = false;
+                    }
+                } else {
+                    // 未解码则清理旧数据，保持状态一致
+                    if (g_ai_data.code_data) {
+                        free((void*)g_ai_data.code_data);
+                        g_ai_data.code_data = NULL;
+                    }
                     g_ai_data.code_flag = false;
                 }
-                esp_code_scanner_destroy(esp_scn);
+
+                // 每帧完成后销毁本地扫描器
+                esp_code_scanner_destroy(esp_scn_local);
                 ai_push_result(&g_ai_data);
                 camera_push_result(frame);
-                
+
             } catch (...) {
                 // 异常处理：释放帧缓冲区并重置状态
                 if (frame) {
@@ -587,7 +627,7 @@ extern "C" __attribute__((weak)) void code_scanner_task(void* arg) {
                 ai_push_result(&g_ai_data);
             }
         }
-        vTaskDelay(pdMS_TO_TICKS(1));
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
     cleanup_ai_resources();
     free_camera_flag = 1;

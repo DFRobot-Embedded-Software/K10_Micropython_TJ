@@ -677,20 +677,20 @@ static mp_uint_t lwip_raw_udp_receive(lwip_socket_obj_t *socket, byte *buf, mp_u
 
 // For use in stream virtual methods
 #define STREAM_ERROR_CHECK(socket) \
-    if (socket->state < 0) { \
-        *_errno = error_lookup_table[-socket->state]; \
-        return MP_STREAM_ERROR; \
-    } \
-    assert(socket->pcb.tcp);
+        if (socket->state < 0) { \
+            *_errno = error_lookup_table[-socket->state]; \
+            return MP_STREAM_ERROR; \
+        } \
+        assert(socket->pcb.tcp);
 
 // Version of above for use when lock is held
 #define STREAM_ERROR_CHECK_WITH_LOCK(socket) \
-    if (socket->state < 0) { \
-        *_errno = error_lookup_table[-socket->state]; \
-        MICROPY_PY_LWIP_EXIT \
-        return MP_STREAM_ERROR; \
-    } \
-    assert(socket->pcb.tcp);
+        if (socket->state < 0) { \
+            *_errno = error_lookup_table[-socket->state]; \
+            MICROPY_PY_LWIP_EXIT \
+            return MP_STREAM_ERROR; \
+        } \
+        assert(socket->pcb.tcp);
 
 
 // Helper function for send/sendto to handle TCP packets

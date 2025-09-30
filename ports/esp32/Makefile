@@ -41,7 +41,7 @@ DEVICE += $(PORT_ARG) $(BAUD_ARG)
 
 PYTHON ?= python3
  
-.PHONY: all clean deploy erase submodules  copy_modules FORCE 
+.PHONY: all clean deploy flash-firmware erase submodules  copy_modules FORCE 
 
 USER_C_MODULES = ../../../examples/usercmodule/micropython.cmake
 
@@ -89,7 +89,9 @@ all:
 		$(BUILD)/partition_table/partition-table.bin \
 		$(BUILD)/micropython.bin \
 		$(BUILD)/firmware.bin \
-		$(BUILD)/micropython.uf2
+		$(BUILD)/micropython.uf2 \
+		$(BUILD)/srmodels/srmodels.bin \
+		../../../esp-idf/components/esp-sr/esp-tts/esp_tts_chinese/esp_tts_voice_data_xiaoxin.dat
 
 #$(call RUN_IDF_PY,$(DEVICE) flash)
 
@@ -100,6 +102,11 @@ clean:
 
 deploy:
 	$(call RUN_IDF_PY,$(DEVICE) flash)
+
+# 使用打包好的firmware.bin文件进行烧录
+flash-firmware:
+	@echo "Flashing complete firmware.bin..."
+	$(PYTHON) -m esptool --chip esp32s3 -b 460800 --before default_reset --after hard_reset write_flash --flash_mode dio --flash_size 16MB --flash_freq 80m 0x0 $(BUILD)/firmware.bin
 
 erase:
 	$(call RUN_IDF_PY,$(DEVICE) erase-flash)
