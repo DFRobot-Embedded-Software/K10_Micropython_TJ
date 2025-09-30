@@ -229,6 +229,82 @@ void app_main(void) {
 
 }
 
+#include "py/nlr.h"
+#include "py/mphal.h"
+#include "shared/runtime/pyexec.h"
+#include "py/mpstate.h"
+#include "py/builtin.h"
+
+// 清除调度队列中的任务，防止已调度的任务执行
+static void mp_clear_sched_queue(void) {
+    #if MICROPY_ENABLE_SCHEDULER
+    mp_uint_t atomic_state = MICROPY_BEGIN_ATOMIC_SECTION();
+    // 清除调度队列，防止已调度的任务执行
+    MP_STATE_VM(sched_idx) = 0;
+    MP_STATE_VM(sched_len) = 0;
+    MP_STATE_VM(sched_state) = MP_SCHED_IDLE;
+    MICROPY_END_ATOMIC_SECTION(atomic_state);
+    #endif
+}
+
+void mp_cleanup_resources_on_interrupt(void) {
+
+    // 1) 先禁用所有中断，防止清理过程中再被回调打断
+    // 禁用定时器中断
+    machine_timer_deinit_all();
+    
+    // 清除调度队列，防止已调度的任务执行
+    mp_clear_sched_queue();
+    
+    // 等待定时器完全停止
+    //vTaskDelay(200);  // 等待200ms确保所有定时器中断完成
+    
+    mp_thread_deinit();
+    machine_pwm_deinit_all();
+    machine_pins_deinit();
+    /*
+    //使用外部模块_clean.py清理资源
+    // 2) 安全执行Python清理代码（禁用中断）
+    if (mp_import_stat("_clean.py") == MP_IMPORT_STAT_FILE) {
+        
+        // 使用try-catch机制安全执行Python代码
+        nlr_buf_t nlr;
+        if (nlr_push(&nlr) == 0) {
+            // 禁用KeyboardInterrupt，然后执行Python代码
+            mp_hal_set_interrupt_char(-1); // 禁用KeyboardInterrupt
+            
+            // 执行Python文件
+            pyexec_file("_clean.py");
+            
+            // 恢复中断设置（使用默认值3，即Ctrl+C）
+            mp_hal_set_interrupt_char(3);
+            
+            nlr_pop();
+        } else {
+            // 捕获任何异常，包括KeyboardInterrupt
+            // 不重新抛出异常，避免干扰KeyboardInterrupt处理
+        }
+    }
+    */
+    //使用内部模块_clean.py清理资源
+    nlr_buf_t nlr;
+    if (nlr_push(&nlr) == 0) {
+        // 禁用KeyboardInterrupt，然后执行Python代码
+        mp_hal_set_interrupt_char(-1); // 禁用KeyboardInterrupt
+        
+        // 执行内部模块_clean.py
+        pyexec_frozen_module("_clean.py", false);
+        
+        // 恢复中断设置（使用默认值3，即Ctrl+C）
+        mp_hal_set_interrupt_char(3);
+        
+        nlr_pop();
+    } else {
+        // 捕获任何异常，包括KeyboardInterrupt
+        // 不重新抛出异常，避免干扰KeyboardInterrupt处理
+    }
+    
+}
 void nlr_jump_fail(void *val) {
     printf("NLR jump failed, val=%p\n", val);
     esp_restart();

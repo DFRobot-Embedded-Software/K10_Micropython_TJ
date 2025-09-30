@@ -474,6 +474,55 @@ class St77xx_lvgl(object):
         self.disp_drv.set_render_mode(lv.DISPLAY_RENDER_MODE.PARTIAL)
         self.disp_drv.set_flush_cb(self.disp_drv_flush_cb)
 
+    def deinit(self):
+        print("St77xx_lvgl deinit")
+        # 1. 先删除显示驱动
+        if self.disp_drv:
+            print("St77xx_lvgl deinit disp_drv")
+            self.disp_drv.delete()
+            self.disp_drv = None
+        
+        # 2. 释放缓冲区
+        if hasattr(self, 'draw_buf1') and self.draw_buf1:
+            try:
+                # LVGL缓冲区释放方法（如果存在）
+                if hasattr(self.draw_buf1, 'delete'):
+                    print("St77xx_lvgl deinit draw_buf1")
+                    self.draw_buf1.delete()
+                elif hasattr(self.draw_buf1, 'deinit'):
+                    print("St77xx_lvgl deinit draw_buf1")
+                    self.draw_buf1.deinit()
+            except Exception as e:
+                pass
+            finally:
+                self.draw_buf1 = None
+        
+        if hasattr(self, 'draw_buf2') and self.draw_buf2:
+            try:
+                # LVGL缓冲区释放方法（如果存在）
+                if hasattr(self.draw_buf2, 'delete'):
+                    print("St77xx_lvgl deinit draw_buf2")
+                    self.draw_buf2.delete()
+                elif hasattr(self.draw_buf2, 'deinit'):
+                    print("St77xx_lvgl deinit draw_buf2")
+                    self.draw_buf2.deinit()
+            except Exception as e:
+                pass
+            finally:
+                self.draw_buf2 = None
+        
+        # 3. 清理其他资源
+        if hasattr(self, 'event_loop') and self.event_loop:
+            try:
+                if hasattr(self.event_loop, 'deinit'):
+                    print("St77xx_lvgl deinit event_loop")
+                    self.event_loop.deinit()
+            except Exception as e:
+                pass
+            finally:
+                print("St77xx_lvgl deinit event_loop")
+                self.event_loop = None
+
 class St7735(St7735_hw,St77xx_lvgl):
     def __init__(self,res,doublebuffer=True,factor=4,**kw):
         '''See :obj:`St77xx_hw` for the meaning of the parameters.'''

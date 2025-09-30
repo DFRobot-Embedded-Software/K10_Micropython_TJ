@@ -825,11 +825,11 @@ K10扬声器类
 '''
 class Speaker(object):
     def __init__(self):
-        #print("init speaker\n")
+
         self.i2s = I2S(1,sck = 0,ws=38, sd= 45, mode=I2S.TX, bits=32, format=I2S.MONO, rate=16000, ibuf=20000)
         self.i2s.deinit()
         self._i2c = k10_i2c
-        #print("init done\n")
+
         self.buzzMelody = 2
         self.playTone = 2
         self.freqTable = [ 31, 33, 35, 37, 39, 41, 44, 46, 49, 52, 55, 58, 62, 65, 69, 73, 78, 82, 87, 92, 98, 104, 110, 
@@ -1285,550 +1285,52 @@ class Screen(object):
 
     def show_camera(self,camera):
         self.camera_timer = lv.timer_create(lambda t: self.show_camera_img(camera.camera_capture()), 1, None)
-    
+
     def deinit(self):
-        if self.camera_timer:
-            self.camera_timer.delete()
-            self.camera_timer = None
-        lv.deinit()
-        self.display_bus.deinit()
-        self.spi_bus.deinit()
-        self.img.deinit()
-        self.canvas.deinit()
-        self.layer.deinit()
-        self.area.deinit()
-    '''
-    def show_cat_detect(self, camera):
-        import time
-        
-        # 先停止之前的任务（如果存在）
-        self.stop_cat_detect()
-        
-        # 初始化变量
-        self.frame_lock = allocate_lock()
-        self.shared_buf = bytearray(240*320*2)
-        self.running = True
-        self.cat_timer = None
-        self.show_timer = None
-
-    # -------- 双缓冲与限流刷新（新） --------
-    def init_camera_double_buffer(self, width=240, height=320, period_ms=50, swap_rgb565=True):
-        self._dbuf_w = width
-        self._dbuf_h = height
-        self._dbuf_bytes = width * height * 2
-        self._dbuf_swap = swap_rgb565
-        # 持久化显示缓冲（用于向 LVGL 提供数据）
-        self.display_buf = bytearray(self._dbuf_bytes)
-        # 双缓冲：生产者写入、消费者读取
-        import _thread
-        self._dbuf_lock = getattr(self, '_dbuf_lock', None) or _thread.allocate_lock()
-        self._buf_a = bytearray(self._dbuf_bytes)
-        self._buf_b = bytearray(self._dbuf_bytes)
-        self._write_idx = 0
-        self._read_idx = 1
-        self._have_new = False
-        self._refresh_period_ms = period_ms
-
-        # LVGL对象只创建一次
-        if not hasattr(self, 'img_dsc') or self.img_dsc is None:
-            self.img_dsc = lv.image_dsc_t(
-                dict(
-                    header = dict(cf = lv.COLOR_FORMAT.RGB565, w=width, h=height),
-                    data_size = self._dbuf_bytes,
-                    data = bytes(self.display_buf)
-                )
-            )
-        if not hasattr(self, 'img') or self.img is None:
-            self.img = lv.image(self.screen)
-            self.img.set_src(self.img_dsc)
-
-    def feed_camera_frame(self, buf):
-        # 喂入一帧到双缓冲（线程安全）
-        if not buf or len(buf) != self._dbuf_bytes:
-            return False
-        b = buf if isinstance(buf, (bytes, bytearray)) else bytes(buf)
-        with self._dbuf_lock:
-            if self._write_idx == 0:
-                self._buf_a[:] = b
-            else:
-                self._buf_b[:] = b
-            # 交换读写索引
-            self._write_idx, self._read_idx = self._read_idx, self._write_idx
-            self._have_new = True
-        return True
-
-    def _camera_refresh_cb(self, timer=None):
-        # 限流刷新：仅当有新帧时才刷新
-        local_updated = False
-        with self._dbuf_lock:
-            if self._have_new:
-                src = self._buf_a if self._read_idx == 0 else self._buf_b
-                # 将读缓冲复制到显示缓冲
-                self.display_buf[:] = src
-                self._have_new = False
-                local_updated = True
-        if not local_updated:
-            return
-        if self._dbuf_swap:
-            lv.draw_sw_rgb565_swap(self.display_buf, self._dbuf_bytes)
-        # 更新同一个 img_dsc 数据并刷新
-        self.img_dsc.data = bytes(self.display_buf)
-        self.img.set_src(self.img_dsc)
-        lv.refr_now(None)
-
-    def start_camera_refresh(self):
-        # 启动限流刷新定时器
-        self.stop_camera_refresh()
-        self._camera_timer = lv.timer_create(lambda t: self._camera_refresh_cb(), self._refresh_period_ms, None)
-
-    def stop_camera_refresh(self):
-        # 停止限流刷新
-        if hasattr(self, '_camera_timer') and self._camera_timer:
+        """清理Screen对象的所有资源"""
+        print("Screen deinit...")
+        try:
+            # 2. 清理LVGL对象
+            if hasattr(self, 'canvas') and self.canvas:
+                self.canvas = None
+            if hasattr(self, 'img') and self.img:
+                self.img = None
+            if hasattr(self, 'screen') and self.screen:
+                self.screen = None
+            
+            # 3. 清理缓冲区
+            if hasattr(self, 'canvas_buf'):
+                self.canvas_buf = None
+            if hasattr(self, 'img_dsc'):
+                self.img_dsc = None
+            
+            # 4. 清理SPI总线
+            if hasattr(self, 'spi_bus') and self.spi_bus:
+                print("Screen deinit spi_bus")
+                self.spi_bus.deinit()
+                self.spi_bus = None
+            
+            # 5. 清理显示总线
+            if hasattr(self, 'display_bus') and self.display_bus:
+                print("Screen deinit display_bus")
+                self.display_bus.deinit()
+                self.display_bus = None
+                print("Screen deinit lv")
+                lv.deinit()
+            
+            # 6. 关闭屏幕背光
             try:
-                self._camera_timer.delete()
+                myi2c = I2C(0, scl=Pin(48), sda=Pin(47), freq=100000)
+                temp = myi2c.readfrom_mem(0x20, 0x02, 1)
+                myi2c.writeto(0x20, bytearray([0x02, (temp[0] & 0xFE)]))  # 关闭背光
+                myi2c.deinit()
             except:
                 pass
-            self._camera_timer = None
-        
-        # 确保 img_dsc.data 被正确初始化
-        if not hasattr(self, 'img_dsc') or self.img_dsc.data is None:
-            self.img_dsc = lv.image_dsc_t(
-                dict(
-                    header = dict(cf =lv.COLOR_FORMAT.RGB565, w=240, h=320),
-                    data_size = 240*320*2,
-                    data = bytes(self.shared_buf)
-                )
-            )
-
-        # 简化的摄像头数据读取任务
-        def cat_task():
-            """摄像头数据读取任务"""
-            if not self.running:
-                return
-                
-            try:
-                buf = camera.capture()
-                if buf and len(buf) == len(self.shared_buf):
-                    with self.frame_lock:
-                        self.shared_buf[:] = buf
-            except:
-                pass  # 静默处理错误
-
-        # 简化的显示更新任务
-        def show_task(timer=None):
-            """显示更新任务"""
-            if not self.running:
-                return
-                
-            try:
-                if hasattr(self, 'img_dsc') and hasattr(self, 'img'):
-                    with self.frame_lock:
-                        buf_copy = bytes(self.shared_buf)
-                    
-                    self.img_dsc.data = buf_copy
-                    self.img.set_src(self.img_dsc)
-                    lv.refr_now(None)
-            except:
-                pass  # 静默处理错误
-
-        # 创建定时器，使用更保守的频率
-        try:
-            self.cat_timer = lv.timer_create(lambda t: cat_task(), 500, None)  # 500ms
-            self.show_timer = lv.timer_create(lambda t: show_task(), 500, None)  # 500ms
-            print("Cat detect started with conservative timing")
-        except:
-            self.running = False
-
-    def stop_cat_detect(self):
-        """停止猫检测任务"""
-        # 设置停止标志
-        if hasattr(self, 'running'):
-            self.running = False
-        
-        # 停止定时器
-        if hasattr(self, 'cat_timer') and self.cat_timer:
-            try:
-                self.cat_timer.delete()
-            except:
-                pass
-            self.cat_timer = None
-                
-        if hasattr(self, 'show_timer') and self.show_timer:
-            try:
-                self.show_timer.delete()
-            except:
-                pass
-            self.show_timer = None
-
-
-    def show_cat_detect_simple(self, camera):
-        """极简版本的猫检测，避免所有可能导致崩溃的操作"""
-        try:
-            # 停止之前的任务
-            self.stop_cat_detect()
             
-            # 初始化
-            self.running = True
-            self.shared_buf = bytearray(240*320*2)
-            
-            # 确保 img_dsc 存在
-            if not hasattr(self, 'img_dsc') or self.img_dsc.data is None:
-                self.img_dsc = lv.image_dsc_t(
-                    dict(
-                        header = dict(cf =lv.COLOR_FORMAT.RGB565, w=240, h=320),
-                        data_size = 240*320*2,
-                        data = bytes(self.shared_buf)
-                    )
-                )
-
-            def simple_task():
-                if not self.running:
-                    return
-                try:
-                    buf = camera.capture()
-                    if buf and len(buf) == len(self.shared_buf):
-                        ai_buf = ai.cat_detect(buf)
-                        self.shared_buf[:] = ai_buf
-                        lv.draw_sw_rgb565_swap(self.shared_buf,240*320*2)
-                        self.img_dsc.data = bytes(self.shared_buf)
-                        self.img.set_src(self.img_dsc)
-                        lv.refr_now(None)
-                except:
-                    pass
-
-            # 使用单个定时器，频率更低
-            self.cat_timer = lv.timer_create(lambda t: simple_task(), 100, None)  # 1秒间隔
-            print("Simple cat detect started")
-            
+            print("Screen deinit completed")
         except Exception as e:
-            print(f"Error in simple cat detect: {e}")
-            self.running = False
+            print(f"Error in Screen deinit: {e}")
 
-
-    def show_code_detect(self,camera):
-        frame_lock = allocate_lock()
-        shared_buf = bytearray(240*320*2)
-        def code_task(camera):
-            while True:
-                buf = camera.capture()
-                if buf:
-                    with frame_lock:
-                        ai.code_detect(buf)
-                        shared_buf[:] = buf
-                time.sleep_ms(50)
-        _thread.start_new_thread(code_task, (camera,))
-
-        def show_task():
-            with frame_lock:
-                lv.draw_sw_rgb565_swap(shared_buf,240*320*2)
-                self.img_dsc.data = shared_buf
-                self.img.set_src(self.img_dsc)
-                lv.refr_now(None)
-        
-        lv.timer_create(lambda t:show_task(), 100, None)
-
-
-    def show_code_detect_simple(self, camera):
-        """极简版本的二维码测，避免所有可能导致崩溃的操作"""
-        try:
-            # 停止之前的任务
-            self.stop_cat_detect()
-            
-            # 初始化
-            self.running = True
-            self.shared_buf = bytearray(240*320*2)
-            
-            # 确保 img_dsc 存在
-            if not hasattr(self, 'img_dsc') or self.img_dsc.data is None:
-                self.img_dsc = lv.image_dsc_t(
-                    dict(
-                        header = dict(cf =lv.COLOR_FORMAT.RGB565, w=240, h=320),
-                        data_size = 240*320*2,
-                        data = bytes(self.shared_buf)
-                    )
-                )
-
-            def simple_task():
-                if not self.running:
-                    return
-                try:
-                    buf = camera.capture()
-                    if buf and len(buf) == len(self.shared_buf):
-                        ai.code_detect(buf)
-                        self.shared_buf[:] = buf
-                        lv.draw_sw_rgb565_swap(self.shared_buf,240*320*2)
-                        self.img_dsc.data = bytes(self.shared_buf)
-                        self.img.set_src(self.img_dsc)
-                        lv.refr_now(None)
-                except:
-                    pass
-
-            # 使用单个定时器，频率更低
-            self.cat_timer = lv.timer_create(lambda t: simple_task(), 100, None)  # 1秒间隔
-            print("Simple cat detect started")
-            
-        except Exception as e:
-            print(f"Error in simple cat detect: {e}")
-            self.running = False
-
-    def show_face_detect_simple(self, camera):
-        """极简版本的人脸检测，避免所有可能导致崩溃的操作"""
-        try:
-            # 确保屏幕已经初始化
-            if not hasattr(self, 'screen') or self.screen is None:
-                print("错误：屏幕未初始化，请先调用 init() 方法")
-                return
-                
-            # 停止之前的任务
-            self.stop_cat_detect()
-            self.stop_face_detect()  # 停止之前的人脸检测
-            
-            # 初始化
-            self.running = True
-            self.shared_buf = bytearray(240*320*2)
-            
-            # 确保 img_dsc 存在
-            if not hasattr(self, 'img_dsc') or self.img_dsc is None:
-                self.img_dsc = lv.image_dsc_t(
-                    dict(
-                        header = dict(cf =lv.COLOR_FORMAT.RGB565, w=240, h=320),
-                        data_size = 240*320*2,
-                        data = bytes(self.shared_buf)
-                    )
-                )
-            
-            # 确保 img 控件存在
-            if not hasattr(self, 'img') or self.img is None:
-                self.img = lv.image(self.screen)
-                self.img.set_src(self.img_dsc)
-
-            def simple_task():
-                if not self.running:
-                    return
-                try:
-                    buf = camera.capture()
-                    if buf and len(buf) == len(self.shared_buf):
-                        ai_buf = ai.face_detect(buf)
-                        self.shared_buf[:] = ai_buf
-                        lv.draw_sw_rgb565_swap(self.shared_buf,240*320*2)
-                        self.img_dsc.data = bytes(self.shared_buf)
-                        self.img.set_src(self.img_dsc)
-                        lv.refr_now(None)
-                        print("Simple face detect started 1")
-                    print("Simple face detect started 2")
-                except:
-                    pass
-
-            # 使用单个定时器，频率更低
-            self.cat_timer = lv.timer_create(lambda t: simple_task(), 100, None)  # 1秒间隔
-            print("Simple cat detect started")
-            
-        except Exception as e:
-            print(f"Error in simple cat detect: {e}")
-            self.running = False
-
-
-    def show_face_detect(self, camera):
-        # 确保屏幕已经初始化
-        if not hasattr(self, 'screen') or self.screen is None:
-            print("错误：屏幕未初始化，请先调用 init() 方法")
-            return
-        
-        # 确保必要的属性已初始化
-        if not hasattr(self, 'img_dsc') or self.img_dsc is None:
-            # 创建一个初始的缓冲区
-            initial_buf = bytearray(240*320*2)
-            self.img_dsc = lv.image_dsc_t(
-                dict(
-                    header = dict(cf =lv.COLOR_FORMAT.RGB565, w=240, h=320),
-                    data_size = 240*320*2,
-                    data = bytes(initial_buf)  # 使用实际的数据而不是None
-                )
-            )
-        
-        if not hasattr(self, 'img') or self.img is None:
-            self.img = lv.image(self.screen)
-            self.img.set_src(self.img_dsc)  # 设置初始图像源
-        
-        bufs = [bytearray(240*320*2), bytearray(240*320*2)]  # 双缓冲
-        write_idx = 0
-        read_idx = 1
-    
-        frame_lock = _thread.allocate_lock()
-        new_data_flag = False
-        ai_result = None
-    
-        def ai_task():
-            nonlocal read_idx, write_idx, new_data_flag, ai_result
-            while True:
-                do_detect = False
-                tmp_buf = None
-                with frame_lock:
-                    if new_data_flag:
-                        tmp_buf = bytes(bufs[read_idx])  # 使用bytes避免内存问题
-                        new_data_flag = False
-                        do_detect = True
-                if do_detect:
-                    try:
-                        ai_result = ai.face_detect(tmp_buf)  # 耗时操作
-                    except Exception as e:
-                        print(f"AI detect error: {e}")
-                        ai_result = None
-                time.sleep_ms(20)
-    
-        _thread.start_new_thread(ai_task, ())
-    
-        def ui_task(timer):
-            """UI更新任务，使用定时器而不是异步任务"""
-            nonlocal write_idx, read_idx, new_data_flag, ai_result
-            try:
-                buf = camera.capture()
-                if buf and len(buf) == 240*320*2:
-                    with frame_lock:
-                        bufs[write_idx][:] = buf
-                        new_data_flag = True
-                        write_idx, read_idx = read_idx, write_idx
-                    
-                    # 显示到屏幕
-                    lv.draw_sw_rgb565_swap(buf, 240*320*2)
-                    self.img_dsc.data = buf
-                    self.img.set_src(self.img_dsc)
-                    lv.refr_now(None)
-        
-                    # 如果有AI结果，可以在这里更新UI
-                    if ai_result:
-                        self.show_ai_result(ai_result)
-            except Exception as e:
-                print(f"UI task error: {e}")
-    
-        # 使用LVGL定时器代替异步任务，每50ms执行一次
-        self.face_detect_timer = lv.timer_create(ui_task, 50, None)
-        print("Face detect started")
-    
-    def stop_face_detect(self):
-        """停止人脸检测"""
-        try:
-            if hasattr(self, 'face_detect_timer') and self.face_detect_timer:
-                lv.timer_del(self.face_detect_timer)
-                self.face_detect_timer = None
-                print("Face detect timer stopped")
-        except Exception as e:
-            print(f"Error stopping face detect: {e}")
-    
-    def show_ai_result(self, ai_result):
-        """显示AI检测结果的方法"""
-        try:
-            if ai_result:
-                # 这里可以添加显示AI结果的逻辑
-                # 比如在屏幕上绘制检测框、显示检测信息等
-                print("AI result received:", len(ai_result) if ai_result else 0)
-        except Exception as e:
-            print(f"Error showing AI result: {e}")
-
-
-
-
-
-    def show_face_detect_simple_v2(self, camera):
-        """持续刷新屏幕并后台做人脸检测"""
-        try:
-            # 停止之前的任务
-            self.stop_cat_detect()
-            self.running = True
-    
-            W, H = 240, 320
-            BYTES = W*H*2
-    
-            # -------- 双缓冲 --------
-            self.display_buf = bytearray(BYTES)   # 用于显示
-            self.ai_buf = bytearray(BYTES)        # 用于 AI 处理
-            self.ai_lock = _thread.allocate_lock()
-            self.ai_have_job = False
-    
-            # -------- 屏幕和控件 --------
-            if not hasattr(self, "screen"):
-                self.screen = lv.obj()
-                self.img = lv.image(self.screen)
-                lv.screen_load(self.screen)
-    
-            # -------- AI 线程 --------
-            def ai_task():
-                while self.running:
-                    job = False
-                    with self.ai_lock:
-                        job = self.ai_have_job
-                    if not job:
-                        time.sleep_ms(10)
-                        continue
-                    
-                    try:
-                        # 处理 ai_buf
-                        result = ai.face_detect(self.ai_buf)
-                        if result and len(result) == BYTES:
-                            # AI 可以将结果绘制回 display_buf，也可以生成新的 image_dsc
-                            # 这里简单示例：直接覆盖 display_buf
-                            with self.ai_lock:
-                                self.display_buf[:] = result
-                    except Exception as e:
-                        print("AI face_detect error:", e)
-                    finally:
-                        with self.ai_lock:
-                            self.ai_have_job = False
-    
-            _thread.start_new_thread(ai_task, ())
-    
-            # -------- 定时器任务：采集 + 显示 + 投递 AI --------
-            def simple_task():
-                if not self.running:
-                    return
-                buf = camera.capture()
-                if not buf or len(buf) != BYTES:
-                    return
-    
-                # 更新显示 buffer
-                self.display_buf[:] = buf
-                lv.draw_sw_rgb565_swap(self.display_buf, BYTES)  # 如需 swap
-    
-                # 每帧生成新的 image_dsc 并 set_src，保证 LVGL 刷新
-                img_dsc = lv.image_dsc_t(dict(
-                    header=dict(cf=lv.COLOR_FORMAT.RGB565, w=W, h=H),
-                    data_size=BYTES,
-                    data=bytes(self.display_buf)   # 每帧生成新的 immutable bytes
-                ))
-                self.img.set_src(img_dsc)
-    
-                # 投递给 AI，如果 AI 空闲
-                with self.ai_lock:
-                    if not self.ai_have_job:
-                        self.ai_buf[:] = buf
-                        self.ai_have_job = True
-    
-            # 每 50ms 执行一次 (~20FPS)
-            self.cat_timer = lv.timer_create(lambda t: simple_task(), 50, None)
-            print("Face detect simple started")
-    
-        except Exception as e:
-            print("Error in show_face_detect_simple:", e)
-            self.running = False
-    
-    def run_camera_smooth(self, camera, duration=10):
-        """运行流畅的摄像头显示"""
-        try:
-            print(f"Starting smooth camera display for {duration} seconds...")
-            self.show_camera(camera)
-            
-            # 使用更好的主循环
-            start_time = time.time()
-            while time.time() - start_time < duration:
-                time.sleep_ms(100)  # 每100ms检查一次
-                
-            print("Camera display completed")
-            self.stop_cat_detect()  # 停止摄像头显示
-            
-        except Exception as e:
-            print(f"Error in smooth camera display: {e}")
-            self.stop_cat_detect()
-'''
 
 class Wifibase(object):
     def __init__(self):

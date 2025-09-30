@@ -211,6 +211,10 @@ static mp_uint_t mp_reader_stdin_readbyte(void *data) {
         mp_hal_stdout_tx_strn("\x04", 1); // indicate end to host
         if (c == CHAR_CTRL_C) {
             #if MICROPY_KBD_EXCEPTION
+            // 在抛出KeyboardInterrupt之前进行资源清理
+            extern void mp_cleanup_resources_on_interrupt(void);
+            mp_cleanup_resources_on_interrupt();
+            
             MP_STATE_VM(mp_kbd_exception).traceback_data = NULL;
             nlr_raise(MP_OBJ_FROM_PTR(&MP_STATE_VM(mp_kbd_exception)));
             #else
