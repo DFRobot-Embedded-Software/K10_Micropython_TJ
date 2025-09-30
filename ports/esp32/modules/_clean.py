@@ -1,9 +1,8 @@
 import sys
-import lvgl as lv
 
 if 'unihiker_k10' in sys.modules:
+    import lvgl as lv
     lv.deinit()
-    
 
 
 

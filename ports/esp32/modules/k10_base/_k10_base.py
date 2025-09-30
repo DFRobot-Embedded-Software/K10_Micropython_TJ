@@ -802,11 +802,9 @@ K10扬声器类
 '''
 class Speaker(object):
     def __init__(self):
-        print("init speaker\n")
         self.i2s = I2S(1,sck = 0,ws=38, sd= 45, mode=I2S.TX, bits=32, format=I2S.MONO, rate=16000, ibuf=20000)
         self.i2s.deinit()
         self._i2c = k10_i2c
-        print("init done\n")
         self.buzzMelody = 2
         self.playTone = 2
         self.freqTable = [ 31, 33, 35, 37, 39, 41, 44, 46, 49, 52, 55, 58, 62, 65, 69, 73, 78, 82, 87, 92, 98, 104, 110, 
