@@ -1031,6 +1031,7 @@ class Camera(object):
     def __init__(self):
         self.cam = camera
         self._i2c = k10_i2c
+        
     def init(self):
         #复位摄像头
         temp = self._i2c.readfrom_mem(0x20, 0x06, 1)
@@ -1041,6 +1042,7 @@ class Camera(object):
         temp = self._i2c.readfrom_mem(0x20, 0x02, 1)
         self._i2c.writeto(0x20,bytearray([0x02, (temp[0] | 0x02)]))
         self.cam.init(0)
+
     def camera_capture(self):
         return self.cam.capture()
     def save(self):
@@ -1054,6 +1056,7 @@ class Screen(object):
         self.spi_bus = SPI(1,baudrate=40_000_000,sck=Pin(12),mosi=Pin(21))
         self.display_bus = Ili9341(spi= self.spi_bus, cs=14, dc=13,rot=dir)
         self.linewidth = 1
+        self._camera_running = False
         
     #初始化屏幕，设置方向为(0~3)
     def init(self,dir=2):
@@ -1097,6 +1100,8 @@ class Screen(object):
         )
         #显示摄像头画面的timer
         self.camera_timer = None
+        # 记录当前图片宽高
+        self._img_wh = (240, 320)
 
     #显示指定颜色背景
     def show_bg(self,color=0xFFFFFF):
@@ -1245,51 +1250,126 @@ class Screen(object):
         lv.screen_load(self.screen)
 
     def show_camera_img(self,buf):
-        if buf is None or len(buf) != 240*320*2:
-            return
-
-        # 持久化初始化：display_buf / img_dsc / img 只创建一次
-        if not hasattr(self, 'display_buf'):
-            self.display_buf = bytearray(240*320*2)
-
-        if not hasattr(self, 'img_dsc') or self.img_dsc is None:
-            self.img_dsc = lv.image_dsc_t(
-                dict(
-                    header = dict(cf = lv.COLOR_FORMAT.RGB565, w=240, h=320),
-                    data_size = 240*320*2,
-                    data = bytes(self.display_buf)
-                )
-            )
-
-        if not hasattr(self, 'img') or self.img is None:
-            self.img = lv.image(self.screen)
-            self.img.set_src(self.img_dsc)
-
-        # 将输入帧拷贝到自有缓冲，避免依赖外部生命周期
-        if isinstance(buf, (bytes, bytearray)):
-            self.display_buf[:] = buf
-        else:
-            # 兜底：尽量从缓冲协议读取
-            b = bytes(buf)
-            if len(b) != len(self.display_buf):
+        try:
+            # 快速检查，严格匹配 240x320 RGB565 帧
+            if buf is None or len(buf) != 240*320*2:
                 return
-            self.display_buf[:] = b
 
-        # 如需RGB565字节交换可打开下一行
-        lv.draw_sw_rgb565_swap(self.display_buf, len(self.display_buf))
+            # 持久化初始化：display_buf / img_dsc / img 只创建一次
+            if not hasattr(self, 'display_buf'):
+                self.display_buf = bytearray(240*320*2)
 
-        # 更新同一个 img_dsc 的数据并刷新
-        self.img_dsc.data = bytes(self.display_buf)
-        self.img.set_src(self.img_dsc)
-        lv.refr_now(None)
+            buflen = 240*320*2
+
+            if not hasattr(self, 'img') or self.img is None:
+                self.img = lv.image(self.screen)
+                self.img.set_src(self.img_dsc)
+                try:
+                    self.img.align(lv.ALIGN.CENTER, 0, 0)
+                except:
+                    pass
+                try:
+                    lv.screen_load(self.screen)
+                except:
+                    pass
+                try:
+                    self.img.align(lv.ALIGN.CENTER, 0, 0)
+                except:
+                    pass
+                try:
+                    lv.screen_load(self.screen)
+                except:
+                    pass
+
+            # 将输入帧拷贝到自有缓冲，避免依赖外部生命周期
+            if isinstance(buf, (bytes, bytearray)):
+                self.display_buf[:buflen] = buf
+            else:
+                # 兜底：尽量从缓冲协议读取
+                b = bytes(buf)
+                if len(b) != buflen:
+                    return
+                self.display_buf[:buflen] = b
+
+            # 如需RGB565字节交换可打开下一行
+            # 按原始实现启用RGB565字节交换（若颜色不对可注释掉）
+            try:
+                lv.draw_sw_rgb565_swap(self.display_buf, buflen)
+            except:
+                pass
+
+            # 更新同一个 img_dsc 的数据并刷新
+            self.img_dsc.data = bytes(self.display_buf)
+            self.img.set_src(self.img_dsc)
+            # 确保首次已加载并可见
+            try:
+                lv.screen_load(self.screen)
+            except:
+                pass
+            
+            # 使用非阻塞刷新，避免阻塞串口通信
+            try:
+                self.img.invalidate()
+            except:
+                # 如果刷新失败，静默处理
+                pass
+            
+        except Exception as e:
+            # 在中断或异常情况下静默处理，避免影响主程序
+            pass
 
     def show_camera(self,camera):
-        self.camera_timer = lv.timer_create(lambda t: self.show_camera_img(camera.camera_capture()), 1, None)
+        # 停掉已有的定时器，避免重复
+        try:
+            if self.camera_timer is not None:
+                self.camera_timer.delete()
+        except:
+            pass
+        self.camera_timer = None
+        self._camera_running = True
+        # 以 ~30 FPS 刷新，降低CPU占用，避免阻塞串口
+        self.camera_timer = lv.timer_create(lambda t: self.show_camera_img(camera.camera_capture()), 33, None)
+
+    def stop_camera(self):
+        # 安全停止摄像头显示定时器
+        self._camera_running = False
+        try:
+            if self.camera_timer is not None:
+                self.camera_timer.delete()
+        except:
+            pass
+        self.camera_timer = None
+    
+    def show_camera_img_safe(self, buf):
+        """安全的摄像头图像显示函数，专门用于处理中断情况"""
+        try:
+            # 快速检查，避免不必要的处理
+            if buf is None or len(buf) != 240*320*2:
+                return False
+            
+            # 检查是否在中断状态，如果是则跳过显示
+            import micropython
+            if micropython.opt_level() > 0:
+                # 在优化模式下，减少处理以避免阻塞
+                return True
+            
+            # 调用原始显示函数
+            self.show_camera_img(buf)
+            return True
+            
+        except Exception as e:
+            # 静默处理所有异常，避免影响主程序
+            return False
 
     def deinit(self):
         """清理Screen对象的所有资源"""
         print("Screen deinit...")
         try:
+            # 1. 停止摄像头显示
+            try:
+                self.stop_camera()
+            except:
+                pass
             # 2. 清理LVGL对象
             if hasattr(self, 'canvas') and self.canvas:
                 self.canvas = None

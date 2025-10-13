@@ -7,6 +7,7 @@
 #include "py/binary.h"
 #include "py/mpstate.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "freertos/queue.h"
 #include "ai_data.h"
 #include "esp_camera.h"
@@ -94,6 +95,12 @@ static void ai_callback_task(void* arg) {
 
 
 static mp_obj_t mp_camera_start(void) {
+    // 检查任务是否已存在
+    if (camera_start_task_handle != NULL) {
+        mp_print_face_cstr("Camera task already running\n");
+        return mp_const_none;
+    }
+    
     camera_config_t config;
     config.ledc_channel = LEDC_CHANNEL_0;
     config.ledc_timer = LEDC_TIMER_0;
@@ -121,14 +128,30 @@ static mp_obj_t mp_camera_start(void) {
 
     config.fb_location = CAMERA_FB_IN_PSRAM;
     config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
-    esp_err_t err = esp_camera_init(&config);
+
+    esp_err_t err = esp_camera_deinit();
+    err = esp_camera_init(&config);
     if (err != ESP_OK)
     {
         char error_msg[100];
         snprintf(error_msg, sizeof(error_msg), "Camera init failed with error 0x%x\n", err);
         mp_print_face_cstr(error_msg);
+        return mp_const_none;
     }
-    xTaskCreatePinnedToCore(camera_start_task, "camera_start_task", 1024*16, NULL, 1, &camera_start_task_handle, 0);
+    
+    // 创建摄像头队列
+    if (!camera_queue) {
+        camera_queue = xQueueCreate(10, sizeof(camera_fb_t *)); // 最多缓存10个结果
+    }
+    
+    // 创建摄像头任务
+    BaseType_t result = xTaskCreatePinnedToCore(camera_start_task, "camera_start_task", 1024*16, NULL, 1, &camera_start_task_handle, 0);
+    if (result != pdPASS) {
+        mp_print_face_cstr("Failed to create camera task\n");
+        camera_start_task_handle = NULL;
+        return mp_const_none;
+    }
+    
     return mp_const_none;
 }
 
@@ -177,7 +200,7 @@ static mp_obj_t mp_init_ai(void) {
     }
     // 创建AI回调任务
     if (!ai_callback_task_handle) {
-        xTaskCreatePinnedToCore(ai_callback_task, "ai_cb_task", 1024*4, NULL, 5, &ai_callback_task_handle, 1);
+        xTaskCreatePinnedToCore(ai_callback_task, "ai_cb_task", 1024*4, NULL, 4, &ai_callback_task_handle, 1);
     }
     if (!camera_output_queue) {
         camera_output_queue = xQueueCreate(5, sizeof(camera_fb_t *)); // 最多缓存5个帧指针
@@ -212,7 +235,7 @@ static MP_DEFINE_CONST_FUN_OBJ_0(mp_move_detect_obj, mp_move_detect);
 static mp_obj_t mp_camera_capture(void) {
     camera_fb_t *frame = NULL;
     if (init_ai_flag == 0) {
-        if (xQueueReceive(camera_queue, &frame, 0)) { // 非阻塞接收
+        if (xQueueReceive(camera_queue, &frame, pdMS_TO_TICKS(10))) { // 短超时，避免阻塞Python主循环
             if (frame) {
                 mp_obj_t image = mp_obj_new_bytes(frame->buf, frame->len);
                 esp_camera_fb_return(frame); // 释放帧缓冲区
@@ -223,7 +246,7 @@ static mp_obj_t mp_camera_capture(void) {
             }
         }
     }else{
-        if (xQueueReceive(camera_output_queue, &frame, 0)) { // 非阻塞接收
+        if (xQueueReceive(camera_output_queue, &frame, pdMS_TO_TICKS(10))) { // 短超时，避免阻塞Python主循环
             if (frame) {
                 mp_obj_t image = mp_obj_new_bytes(frame->buf, frame->len);
                 esp_camera_fb_return(frame); // 释放帧缓冲区
@@ -294,27 +317,22 @@ static mp_obj_t mp_is_ai_data_updated(void) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(mp_is_ai_data_updated_obj, mp_is_ai_data_updated);
 
-// 释放AI系统和资源
+// 释放AI系统和资源 - 修复队列死锁问题
 static mp_obj_t mp_deinit_ai(void) {
     
-    // 立即设置退出标志
+    // 立即设置退出标志，让任务自然退出
     free_ai_flag = 1;
     free_camera_flag = 1;
     
-    // 强制删除所有任务，不等待
-    if (ai_callback_task_handle != NULL) {
-        vTaskDelete(ai_callback_task_handle);
-        ai_callback_task_handle = NULL;
+    // 清理所有任务
+    if (camera_start_task_handle != NULL) {
+        vTaskDelete(camera_start_task_handle);
+        camera_start_task_handle = NULL;
     }
     
     if (face_recognize_task_handle != NULL) {
         vTaskDelete(face_recognize_task_handle);
         face_recognize_task_handle = NULL;
-    }
-    
-    if (camera_start_task_handle != NULL) {
-        vTaskDelete(camera_start_task_handle);
-        camera_start_task_handle = NULL;
     }
     
     if (cat_detect_task_handle != NULL) {
@@ -332,13 +350,15 @@ static mp_obj_t mp_deinit_ai(void) {
         move_detect_task_handle = NULL;
     }
     
-    // 短暂等待确保任务删除完成
-    vTaskDelay(pdMS_TO_TICKS(50));
+    if (ai_callback_task_handle != NULL) {
+        vTaskDelete(ai_callback_task_handle);
+        ai_callback_task_handle = NULL;
+    }
     
-    // 强制清理队列
-    if (result_queue != NULL) {
-        vQueueDelete(result_queue);
-        result_queue = NULL;
+    // 立即清理队列，避免camera_capture()死锁
+    if (camera_queue != NULL) {
+        vQueueDelete(camera_queue);
+        camera_queue = NULL;
     }
     
     if (camera_output_queue != NULL) {
@@ -346,19 +366,17 @@ static mp_obj_t mp_deinit_ai(void) {
         camera_output_queue = NULL;
     }
     
-    // 调用C++的强制清理函数
-    extern void cleanup_ai_resources_force(void);
-    cleanup_ai_resources_force();
+    if (result_queue != NULL) {
+        vQueueDelete(result_queue);
+        result_queue = NULL;
+    }
     
-    // 强制清理摄像头
-    esp_camera_deinit();
-    
-    // 重置所有状态
+    // 重置状态
     g_ai_callback = mp_const_none;
     g_ai_data_updated = false;
     memset(&g_latest_ai_data, 0, sizeof(g_latest_ai_data));
     
-    // 重置所有标志位
+    // 重置标志位
     init_ai_flag = 0;
     free_ai_flag = 0;
     free_camera_flag = 0;
