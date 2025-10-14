@@ -686,7 +686,7 @@ class dht(object):
 light = Light()
 mic = Mic()
 speaker = Speaker()
-#tf_card = TF_card()
+tf_card = TF_card()
 screen = Screen()
 #camera = Camera()
 #wifi = WiFi()
