@@ -684,15 +684,16 @@ class dht(object):
         return self._dht.temperature(),self._dht.humidity()
 
 light = Light()
-mic = Mic()
+
 speaker = Speaker()
-tf_card = TF_card()
 screen = Screen()
+acce = accelerometer()
+rgb = rgb_board()
+mic = Mic()
 #camera = Camera()
 #wifi = WiFi()
 #mqttclient = MqttClient()
-acce = accelerometer()
-rgb = rgb_board()
+#tf_card = TF_card()
 
 #th = task_handler.TaskHandler()
 

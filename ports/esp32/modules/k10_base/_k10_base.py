@@ -745,7 +745,65 @@ class Es7243e(object):
         self.write_cmd(addr, 0x01, 0x3A)
         self.write_cmd(addr, 0x16, 0x3F)
         self.write_cmd(addr, 0x16, 0x00)
-        
+
+
+def smart_sd_mount():
+    """智能SD卡挂载，记住成功的工作频率"""
+    import uos
+    from machine import SDCard
+    import vfs
+    import time
+    
+    # 检查是否已挂载
+    try:
+        uos.statvfs("/sd")
+        uos.listdir("/sd")
+        print("✓ SD卡已正确挂载")
+        return True
+    except:
+        pass
+    
+    #print("=== 智能SD卡挂载 ===")
+    
+    # 尝试之前成功过的频率（如果有的话）
+    working_frequencies = [10000000, 1000000, 5000000, 20000000]
+    
+    for freq in working_frequencies:
+        try:
+            #print(f"尝试频率: {freq} Hz")
+            
+            # 清理所有挂载点
+            for mount_point in ["/sd", "/sd0", "/sd1", "/sd2"]:
+                try:
+                    uos.umount(mount_point)
+                except:
+                    pass
+            
+            time.sleep(0.3)
+            
+            # 创建SD卡对象
+            sd = SDCard(slot=2, miso=41, mosi=42, sck=44, cs=40, freq=freq)
+            vfs.mount(sd, "/sd")
+            
+            # 等待挂载完成
+            time.sleep(0.3)
+            
+            # 验证挂载
+            uos.statvfs("/sd")
+            uos.listdir("/sd")
+            #print(f"✓ SD卡挂载成功 (频率: {freq} Hz)")
+            return True
+            
+        except Exception as e:
+            print(f"✗ 频率 {freq} Hz 失败: {e}")
+            try:
+                sd.deinit()
+            except:
+                pass
+            continue
+    
+    #print("✗ 智能挂载失败")
+    return False    
 class Mic(object):
     def __init__(self,bits=16,sample_rate=16000,channels=1):
         self.mic = Es7243e(k10_i2c)
@@ -756,6 +814,7 @@ class Mic(object):
         self.sample_rate = sample_rate
         self.channels = channels
         self.time = time
+
     def reinit(self,bits=16,sample_rate=16000,channels=1):
         self.i2s = I2S(0,sck = 0, ws = 38, sd = 39,mode=I2S.RX, bits=bits, 
                        format=I2S.MONO if channels == 1 else I2S.STEREO, rate=sample_rate, ibuf=20000)
@@ -765,6 +824,159 @@ class Mic(object):
             self.i2s.deinit()
             self.i2s = None
 
+    def mount_sd_card(self):
+        """使用您原始验证的挂载方式挂载SD卡"""
+        import uos
+        from machine import SDCard
+        import vfs
+        import time
+        
+        try:
+            # 先检查是否已挂载
+            uos.statvfs("/sd")
+            print("✓ SD卡已挂载")
+            
+            # 额外检查目录访问
+            try:
+                uos.listdir("/sd")
+                print("✓ SD卡目录可访问")
+                return True
+            except Exception as e:
+                print(f"✗ SD卡目录访问失败: {e}")
+                print("尝试重新挂载...")
+                # 如果目录访问失败，强制重新挂载
+                return self.force_remount_sd()
+                
+        except OSError:
+            print("SD卡未挂载，开始挂载...")
+            return self.force_remount_sd()
+
+    def force_remount_sd(self):
+        """强制重新挂载SD卡"""
+        import uos
+        from machine import SDCard
+        import vfs
+        import time
+        
+        print("=== 强制重新挂载SD卡 ===")
+        
+        # 1. 强制卸载所有可能的挂载点
+        mount_points = ["/sd", "/sd0", "/sd1", "/sd2"]
+        for mount_point in mount_points:
+            try:
+                uos.umount(mount_point)
+                print(f"✓ 卸载 {mount_point} 成功")
+            except:
+                pass
+        
+        # 2. 等待一下，确保卸载完成
+        time.sleep(0.3)
+        
+        # 3. 尝试多种挂载配置
+        mount_configs = [
+            {"slot": 2, "miso": 41, "mosi": 42, "sck": 44, "cs": 40, "freq": 1000000},
+            {"slot": 2, "miso": 41, "mosi": 42, "sck": 44, "cs": 40, "freq": 20000000},
+            {"slot": 2, "miso": 41, "mosi": 42, "sck": 44, "cs": 40, "freq": 10000000},
+            {"slot": 2, "miso": 41, "mosi": 42, "sck": 44, "cs": 40, "freq": 5000000},
+        ]
+        
+        for i, config in enumerate(mount_configs):
+            print(f"尝试配置 {i+1}: {config}")
+            try:
+                # 创建SD卡对象
+                sd = SDCard(**config)
+                vfs.mount(sd, "/sd")
+                
+                # 等待挂载完成
+                time.sleep(0.2)
+                
+                # 严格验证挂载
+                uos.statvfs("/sd")
+                uos.listdir("/sd")  # 确保目录可访问
+                print(f"✓ 配置 {i+1} 挂载成功")
+                return True
+                
+            except Exception as e:
+                print(f"✗ 配置 {i+1} 失败: {e}")
+                try:
+                    sd.deinit()
+                except:
+                    pass
+                continue
+        
+        print("✗ 所有配置都失败")
+        return False
+
+    def fix_sd_card_state(self):
+        """修复SD卡ESP_ERR_INVALID_STATE错误，带自动重试"""
+        import uos
+        from machine import SDCard
+        import vfs
+        import time
+        
+        print("=== 修复SD卡状态错误（带重试） ===")
+        
+        # 1. 强制卸载所有挂载点
+        mount_points = ["/sd", "/sd0", "/sd1", "/sd2"]
+        for mount_point in mount_points:
+            try:
+                uos.umount(mount_point)
+                print(f"✓ 卸载 {mount_point}")
+            except:
+                pass
+        
+        # 2. 等待硬件状态重置
+        time.sleep(1.0)
+        
+        # 3. 尝试多种频率配置，带重试机制
+        frequencies = [1000000, 5000000, 10000000, 20000000]
+        
+        for attempt in range(3):  # 最多重试3次
+            print(f"尝试第 {attempt + 1} 次修复...")
+            
+            for freq in frequencies:
+                try:
+                    print(f"  尝试频率: {freq} Hz")
+                    
+                    # 每次尝试前都重新卸载
+                    for mount_point in mount_points:
+                        try:
+                            uos.umount(mount_point)
+                        except:
+                            pass
+                    
+                    time.sleep(0.5)  # 等待卸载完成
+                    
+                    # 创建SD卡对象
+                    sd = SDCard(slot=2, miso=41, mosi=42, sck=44, cs=40, freq=freq)
+                    vfs.mount(sd, "/sd")
+                    
+                    # 等待挂载完成
+                    time.sleep(0.3)
+                    
+                    # 验证挂载
+                    uos.statvfs("/sd")
+                    uos.listdir("/sd")
+                    print(f"✓ SD卡状态修复成功 (频率: {freq} Hz, 尝试: {attempt + 1})")
+                    return True
+                    
+                except Exception as e:
+                    print(f"  ✗ 频率 {freq} Hz 失败: {e}")
+                    try:
+                        sd.deinit()
+                    except:
+                        pass
+                    continue
+            
+            # 如果所有频率都失败，等待更长时间再重试
+            if attempt < 2:
+                print(f"第 {attempt + 1} 次尝试失败，等待更长时间...")
+                time.sleep(2.0)
+        
+        print("✗ 所有尝试都失败")
+        return False
+
+    
 
     def write_wav_header(self, file, num_samples):
         # 计算文件大小
@@ -789,36 +1001,150 @@ class Mic(object):
         file.write(data_size.to_bytes(4, 'little'))
 
     def recode_to_wav(self,path,time):
+        # 如果是 SD 卡路径，确保 SD 卡已挂载
+        if path.startswith("/sd/"):
+            # 使用智能挂载，自动处理重试
+            if not smart_sd_mount():
+                raise Exception("SD卡智能挂载失败")
+        
         self.reinit(bits = self.bits, sample_rate = self.sample_rate, channels=self.channels)
         #创建录音缓存区
         buffer_size = 1024
         audio_buf = bytearray(buffer_size)
 
-        #打开WAV文件
-        with open(path, 'wb') as wav_file:
-            #暂时写入WAV文件头，后续更新数据大小
-            self.write_wav_header(wav_file,num_samples=0)
+        try:
+            #print(f"尝试创建文件: {path}")
+            #打开WAV文件
+            with open(path, 'wb') as wav_file:
+                #暂时写入WAV文件头，后续更新数据大小
+                self.write_wav_header(wav_file,num_samples=0)
 
-            #开始录音
-            num_samples = 0
-            start_time = self.time.time()
-            while self.time.time() - start_time < time:
-                #从I2S中读取数据
-                self.i2s.readinto(audio_buf)
-                wav_file.write(audio_buf)
-                num_samples += len(audio_buf) // (self.bits // 8)
-            #更新文件头中的实际数据大小
-            wav_file.seek(0)
-            self.write_wav_header(wav_file, num_samples)
-        self.i2s.deinit()
-        print("Recording saved to:", path)
+                #开始录音
+                num_samples = 0
+                start_time = self.time.time()
+                while self.time.time() - start_time < time:
+                    #从I2S中读取数据
+                    self.i2s.readinto(audio_buf)
+                    wav_file.write(audio_buf)
+                    num_samples += len(audio_buf) // (self.bits // 8)
+                #更新文件头中的实际数据大小
+                wav_file.seek(0)
+                self.write_wav_header(wav_file, num_samples)
+            self.i2s.deinit()
+            print("Recording saved to:", path)
+        except Exception as e:
+            self.i2s.deinit()
+            print(f"录音失败: {e}")
+            raise
     def recode_sys(self, name="",time=10):
         full_path = "/" + name
         self.recode_to_wav(path=full_path, time=time)
 
     def recode_tf(self, name="",time=10):
+        # 确保文件名有 .wav 扩展名
+        if not name.endswith('.wav'):
+            name += '.wav'
+        
         full_path = "/sd/" + name
+        
+        # 只使用SD卡存储
         self.recode_to_wav(path=full_path, time=time)
+        print(f"✓ 录音已保存到SD卡: {full_path}")
+'''
+def ensure_sd_mounted():
+    """确保 SD 卡已挂载，如果未挂载则尝试挂载"""
+    import uos
+    from machine import SDCard
+    import vfs
+    
+    try:
+        # 检查是否已挂载
+        uos.statvfs("/sd")
+        print("SD 卡已挂载")
+        return True
+    except OSError:
+        print("SD 卡未挂载，尝试挂载...")
+        try:
+            # 尝试挂载 SD 卡
+            sd = SDCard(slot=2, miso=41, mosi=42, sck=44, cs=40, freq=1000000)
+            vfs.mount(sd, "/sd")
+            print("SD 卡挂载成功")
+            return True
+        except Exception as e:
+            print(f"SD 卡挂载失败: {e}")
+            return False
+
+# 全局变量跟踪 SD 卡状态
+_sd_card_initialized = False
+_sd_card_object = None
+
+def safe_sd_mount():
+    """安全的 SD 卡挂载，避免重复初始化"""
+    global _sd_card_initialized, _sd_card_object
+    import uos
+    from machine import SDCard
+    import vfs
+    
+    # 如果已经初始化，直接返回
+    if _sd_card_initialized:
+        try:
+            uos.statvfs("/sd")
+            return True
+        except OSError:
+            # 如果检查失败，重置状态
+            _sd_card_initialized = False
+            _sd_card_object = None
+    
+    try:
+        # 检查是否已挂载
+        uos.statvfs("/sd")
+        print("SD 卡已挂载")
+        _sd_card_initialized = True
+        return True
+    except OSError:
+        print("SD 卡未挂载，尝试挂载...")
+        try:
+            # 先尝试卸载旧的挂载
+            try:
+                uos.umount("/sd")
+            except:
+                pass
+            
+            # 创建新的 SD 卡对象
+            _sd_card_object = SDCard(slot=2, miso=41, mosi=42, sck=44, cs=40, freq=1000000)
+            vfs.mount(_sd_card_object, "/sd")
+            
+            # 验证挂载
+            uos.statvfs("/sd")
+            _sd_card_initialized = True
+            print("SD 卡挂载成功")
+            return True
+        except Exception as e:
+            print(f"SD 卡挂载失败: {e}")
+            _sd_card_initialized = False
+            _sd_card_object = None
+            return False
+
+def safe_sd_unmount():
+    """安全的 SD 卡卸载"""
+    global _sd_card_initialized, _sd_card_object
+    import vfs
+    
+    if _sd_card_initialized:
+        try:
+            vfs.umount("/sd")
+            if _sd_card_object:
+                _sd_card_object.deinit()
+            print("SD 卡已卸载")
+        except Exception as e:
+            print(f"SD 卡卸载失败: {e}")
+        finally:
+            _sd_card_initialized = False
+            _sd_card_object = None
+
+'''
+
+
 
 '''
 K10扬声器类
@@ -972,6 +1298,10 @@ class Speaker(object):
 
     def play_tf_music(self, path):
         full_path = "/sd/" + path
+        if full_path.startswith("/sd/"):
+            # 使用智能挂载，自动处理重试
+            if not smart_sd_mount():
+                raise Exception("SD卡智能挂载失败")
         self.play_music(full_path)
         
     def play_music(self,path):
@@ -1016,15 +1346,17 @@ class TF_card(object):
             #self.sd = SDCard(spi_bus = self.spi_bus, cs = 40, freq = 1000000)
             self.sd = SDCard(slot=2, miso=41, mosi=42, sck=44, cs=40, freq=1000000)
             vfs.mount(self.sd, "/sd")
+
         except:
             print("SD card not detected")
     def __del__(self):
         if self.spi_bus:
             self.spi_bus = None
     def deinit(self):
+        self.sd.deinit()
         if self.spi_bus:
             self.spi_bus = None
-'''
+''' 
 K10的摄像头类
 '''
 class Camera(object):
@@ -1630,5 +1962,55 @@ class _k10_timer(object):
             if isinstance(self._temp, aht20):
                 self._temp.measure()
             self._num = 0
+
 temp_humi = aht20()
 _k10_measure_timer =_k10_timer(temp = temp_humi)
+
+def test_sd_mount_simple():
+    """使用您之前的挂载方式测试SD卡"""
+    import uos
+    from machine import SDCard
+    import vfs
+    
+    print("=== 使用原始挂载方式测试SD卡 ===")
+    
+    try:
+        # 先卸载可能存在的挂载
+        try:
+            uos.umount("/sd")
+        except:
+            pass
+        
+        # 使用您之前的挂载方式
+        sd = SDCard(slot=2, miso=41, mosi=42, sck=44, cs=40, freq=1000000)
+        vfs.mount(sd, "/sd")
+        
+        # 验证挂载
+        uos.statvfs("/sd")
+        print("✓ SD卡挂载成功")
+        
+        # 测试文件操作
+        test_file = "/sd/test_simple.txt"
+        with open(test_file, 'w') as f:
+            f.write("test")
+        print("✓ 文件创建成功")
+        
+        # 读取文件
+        with open(test_file, 'r') as f:
+            content = f.read()
+        print(f"文件内容: {content}")
+        
+        # 删除文件
+        uos.remove(test_file)
+        print("✓ 文件删除成功")
+        
+        print("✓ 原始挂载方式测试通过")
+        return True
+        
+    except Exception as e:
+        print(f"✗ 原始挂载方式测试失败: {e}")
+        try:
+            sd.deinit()
+        except:
+            pass
+        return False
