@@ -1,4 +1,4 @@
-from k10_base import i2c
+from k10_base import k10_i2c
 import time,math,struct,gc
 gc.collect()
 
@@ -9,7 +9,7 @@ int.from_bytes(bytearray([0x01,0x02]),'little') = 0x0201
 #获取声音大小值
 class Voice(object):
     def __init__(self):
-        self.i2c = i2c
+        self.i2c = k10_i2c
         self.addr = 0x20
         self.reg = 0x0D
     def read(self):
@@ -20,7 +20,7 @@ class Voice(object):
 #获取旋钮大小值
 class Knob(object):
     def __init__(self):
-        self.i2c = i2c
+        self.i2c = k10_i2c
         self.addr = 0x20
         self.reg = 0x0F
     def read(self):
@@ -31,7 +31,7 @@ class Knob(object):
 #获取红外接收码
 class Ir(object):
     def __init__(self):
-        self.i2c = i2c
+        self.i2c = k10_i2c
         self.addr = 0x20
         self.reg = 0x08
     def data(self):
@@ -44,7 +44,7 @@ class Ir(object):
 #获取SR04的距离值    
 class Sr04(object):
     def __init__(self):
-        self.i2c = i2c
+        self.i2c = k10_i2c
         self.addr = 0x20
         self.reg = 0x11
     def distance(self):
@@ -58,7 +58,7 @@ class Sr04(object):
 
 class Buzzer(object):
     def __init__(self):
-        self.i2c = i2c
+        self.i2c = k10_i2c
         self.addr = 0x20
         self.reg = 0x26
         self.duty_reg = 0x28
@@ -75,7 +75,7 @@ class Buzzer(object):
 
 class Led(object):
     def __init__(self):
-        self.i2c = i2c
+        self.i2c = k10_i2c
         self.addr = 0x20
         self.freq_reg = 0x1E
         self.r_reg = 0x24
@@ -113,7 +113,7 @@ class Led(object):
 
 class Motor(object):
     def __init__(self):
-        self.i2c = i2c
+        self.i2c = k10_i2c
         self.addr = 0x20
         self.freq_reg = 0x14
         self.m1_reg = 0x16
@@ -161,7 +161,7 @@ class Motor(object):
 
 class Line(object):
     def __init__(self):
-        self.i2c = i2c
+        self.i2c = k10_i2c
         self.addr = 0x30
         self.threshod_reg = 0x0E
         self.adc_reg = 0x09
@@ -205,7 +205,7 @@ class qmi8658(object):
     QMI8658_GRYOODR_250HZ = 0x05
 
     def __init__(self):
-        self.i2c = i2c
+        self.i2c = k10_i2c
         self.addr = 0x6B
         self.ssvtA = 1<<12
         self.ssvtG = 32

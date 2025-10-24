@@ -745,7 +745,65 @@ class Es7243e(object):
         self.write_cmd(addr, 0x01, 0x3A)
         self.write_cmd(addr, 0x16, 0x3F)
         self.write_cmd(addr, 0x16, 0x00)
-        
+
+
+def smart_sd_mount():
+    """智能SD卡挂载，记住成功的工作频率"""
+    import uos
+    from machine import SDCard
+    import vfs
+    import time
+    
+    # 检查是否已挂载
+    try:
+        uos.statvfs("/sd")
+        uos.listdir("/sd")
+        print("✓ SD卡已正确挂载")
+        return True
+    except:
+        pass
+    
+    #print("=== 智能SD卡挂载 ===")
+    
+    # 尝试之前成功过的频率（如果有的话）
+    working_frequencies = [10000000, 1000000, 5000000, 20000000]
+    
+    for freq in working_frequencies:
+        try:
+            #print(f"尝试频率: {freq} Hz")
+            
+            # 清理所有挂载点
+            for mount_point in ["/sd", "/sd0", "/sd1", "/sd2"]:
+                try:
+                    uos.umount(mount_point)
+                except:
+                    pass
+            
+            time.sleep(0.3)
+            
+            # 创建SD卡对象
+            sd = SDCard(slot=2, miso=41, mosi=42, sck=44, cs=40, freq=freq)
+            vfs.mount(sd, "/sd")
+            
+            # 等待挂载完成
+            time.sleep(0.3)
+            
+            # 验证挂载
+            uos.statvfs("/sd")
+            uos.listdir("/sd")
+            #print(f"✓ SD卡挂载成功 (频率: {freq} Hz)")
+            return True
+            
+        except Exception as e:
+            print(f"✗ 频率 {freq} Hz 失败: {e}")
+            try:
+                sd.deinit()
+            except:
+                pass
+            continue
+    
+    #print("✗ 智能挂载失败")
+    return False    
 class Mic(object):
     def __init__(self,bits=16,sample_rate=16000,channels=1):
         self.mic = Es7243e(k10_i2c)
@@ -756,6 +814,7 @@ class Mic(object):
         self.sample_rate = sample_rate
         self.channels = channels
         self.time = time
+
     def reinit(self,bits=16,sample_rate=16000,channels=1):
         self.i2s = I2S(0,sck = 0, ws = 38, sd = 39,mode=I2S.RX, bits=bits, 
                        format=I2S.MONO if channels == 1 else I2S.STEREO, rate=sample_rate, ibuf=20000)
@@ -765,6 +824,159 @@ class Mic(object):
             self.i2s.deinit()
             self.i2s = None
 
+    def mount_sd_card(self):
+        """使用您原始验证的挂载方式挂载SD卡"""
+        import uos
+        from machine import SDCard
+        import vfs
+        import time
+        
+        try:
+            # 先检查是否已挂载
+            uos.statvfs("/sd")
+            print("✓ SD卡已挂载")
+            
+            # 额外检查目录访问
+            try:
+                uos.listdir("/sd")
+                print("✓ SD卡目录可访问")
+                return True
+            except Exception as e:
+                print(f"✗ SD卡目录访问失败: {e}")
+                print("尝试重新挂载...")
+                # 如果目录访问失败，强制重新挂载
+                return self.force_remount_sd()
+                
+        except OSError:
+            print("SD卡未挂载，开始挂载...")
+            return self.force_remount_sd()
+
+    def force_remount_sd(self):
+        """强制重新挂载SD卡"""
+        import uos
+        from machine import SDCard
+        import vfs
+        import time
+        
+        print("=== 强制重新挂载SD卡 ===")
+        
+        # 1. 强制卸载所有可能的挂载点
+        mount_points = ["/sd", "/sd0", "/sd1", "/sd2"]
+        for mount_point in mount_points:
+            try:
+                uos.umount(mount_point)
+                print(f"✓ 卸载 {mount_point} 成功")
+            except:
+                pass
+        
+        # 2. 等待一下，确保卸载完成
+        time.sleep(0.3)
+        
+        # 3. 尝试多种挂载配置
+        mount_configs = [
+            {"slot": 2, "miso": 41, "mosi": 42, "sck": 44, "cs": 40, "freq": 1000000},
+            {"slot": 2, "miso": 41, "mosi": 42, "sck": 44, "cs": 40, "freq": 20000000},
+            {"slot": 2, "miso": 41, "mosi": 42, "sck": 44, "cs": 40, "freq": 10000000},
+            {"slot": 2, "miso": 41, "mosi": 42, "sck": 44, "cs": 40, "freq": 5000000},
+        ]
+        
+        for i, config in enumerate(mount_configs):
+            print(f"尝试配置 {i+1}: {config}")
+            try:
+                # 创建SD卡对象
+                sd = SDCard(**config)
+                vfs.mount(sd, "/sd")
+                
+                # 等待挂载完成
+                time.sleep(0.2)
+                
+                # 严格验证挂载
+                uos.statvfs("/sd")
+                uos.listdir("/sd")  # 确保目录可访问
+                print(f"✓ 配置 {i+1} 挂载成功")
+                return True
+                
+            except Exception as e:
+                print(f"✗ 配置 {i+1} 失败: {e}")
+                try:
+                    sd.deinit()
+                except:
+                    pass
+                continue
+        
+        print("✗ 所有配置都失败")
+        return False
+
+    def fix_sd_card_state(self):
+        """修复SD卡ESP_ERR_INVALID_STATE错误，带自动重试"""
+        import uos
+        from machine import SDCard
+        import vfs
+        import time
+        
+        print("=== 修复SD卡状态错误（带重试） ===")
+        
+        # 1. 强制卸载所有挂载点
+        mount_points = ["/sd", "/sd0", "/sd1", "/sd2"]
+        for mount_point in mount_points:
+            try:
+                uos.umount(mount_point)
+                print(f"✓ 卸载 {mount_point}")
+            except:
+                pass
+        
+        # 2. 等待硬件状态重置
+        time.sleep(1.0)
+        
+        # 3. 尝试多种频率配置，带重试机制
+        frequencies = [1000000, 5000000, 10000000, 20000000]
+        
+        for attempt in range(3):  # 最多重试3次
+            print(f"尝试第 {attempt + 1} 次修复...")
+            
+            for freq in frequencies:
+                try:
+                    print(f"  尝试频率: {freq} Hz")
+                    
+                    # 每次尝试前都重新卸载
+                    for mount_point in mount_points:
+                        try:
+                            uos.umount(mount_point)
+                        except:
+                            pass
+                    
+                    time.sleep(0.5)  # 等待卸载完成
+                    
+                    # 创建SD卡对象
+                    sd = SDCard(slot=2, miso=41, mosi=42, sck=44, cs=40, freq=freq)
+                    vfs.mount(sd, "/sd")
+                    
+                    # 等待挂载完成
+                    time.sleep(0.3)
+                    
+                    # 验证挂载
+                    uos.statvfs("/sd")
+                    uos.listdir("/sd")
+                    print(f"✓ SD卡状态修复成功 (频率: {freq} Hz, 尝试: {attempt + 1})")
+                    return True
+                    
+                except Exception as e:
+                    print(f"  ✗ 频率 {freq} Hz 失败: {e}")
+                    try:
+                        sd.deinit()
+                    except:
+                        pass
+                    continue
+            
+            # 如果所有频率都失败，等待更长时间再重试
+            if attempt < 2:
+                print(f"第 {attempt + 1} 次尝试失败，等待更长时间...")
+                time.sleep(2.0)
+        
+        print("✗ 所有尝试都失败")
+        return False
+
+    
 
     def write_wav_header(self, file, num_samples):
         # 计算文件大小
@@ -789,36 +1001,150 @@ class Mic(object):
         file.write(data_size.to_bytes(4, 'little'))
 
     def recode_to_wav(self,path,time):
+        # 如果是 SD 卡路径，确保 SD 卡已挂载
+        if path.startswith("/sd/"):
+            # 使用智能挂载，自动处理重试
+            if not smart_sd_mount():
+                raise Exception("SD卡智能挂载失败")
+        
         self.reinit(bits = self.bits, sample_rate = self.sample_rate, channels=self.channels)
         #创建录音缓存区
         buffer_size = 1024
         audio_buf = bytearray(buffer_size)
 
-        #打开WAV文件
-        with open(path, 'wb') as wav_file:
-            #暂时写入WAV文件头，后续更新数据大小
-            self.write_wav_header(wav_file,num_samples=0)
+        try:
+            #print(f"尝试创建文件: {path}")
+            #打开WAV文件
+            with open(path, 'wb') as wav_file:
+                #暂时写入WAV文件头，后续更新数据大小
+                self.write_wav_header(wav_file,num_samples=0)
 
-            #开始录音
-            num_samples = 0
-            start_time = self.time.time()
-            while self.time.time() - start_time < time:
-                #从I2S中读取数据
-                self.i2s.readinto(audio_buf)
-                wav_file.write(audio_buf)
-                num_samples += len(audio_buf) // (self.bits // 8)
-            #更新文件头中的实际数据大小
-            wav_file.seek(0)
-            self.write_wav_header(wav_file, num_samples)
-        self.i2s.deinit()
-        print("Recording saved to:", path)
+                #开始录音
+                num_samples = 0
+                start_time = self.time.time()
+                while self.time.time() - start_time < time:
+                    #从I2S中读取数据
+                    self.i2s.readinto(audio_buf)
+                    wav_file.write(audio_buf)
+                    num_samples += len(audio_buf) // (self.bits // 8)
+                #更新文件头中的实际数据大小
+                wav_file.seek(0)
+                self.write_wav_header(wav_file, num_samples)
+            self.i2s.deinit()
+            print("Recording saved to:", path)
+        except Exception as e:
+            self.i2s.deinit()
+            print(f"录音失败: {e}")
+            raise
     def recode_sys(self, name="",time=10):
         full_path = "/" + name
         self.recode_to_wav(path=full_path, time=time)
 
     def recode_tf(self, name="",time=10):
+        # 确保文件名有 .wav 扩展名
+        if not name.endswith('.wav'):
+            name += '.wav'
+        
         full_path = "/sd/" + name
+        
+        # 只使用SD卡存储
         self.recode_to_wav(path=full_path, time=time)
+        print(f"✓ 录音已保存到SD卡: {full_path}")
+'''
+def ensure_sd_mounted():
+    """确保 SD 卡已挂载，如果未挂载则尝试挂载"""
+    import uos
+    from machine import SDCard
+    import vfs
+    
+    try:
+        # 检查是否已挂载
+        uos.statvfs("/sd")
+        print("SD 卡已挂载")
+        return True
+    except OSError:
+        print("SD 卡未挂载，尝试挂载...")
+        try:
+            # 尝试挂载 SD 卡
+            sd = SDCard(slot=2, miso=41, mosi=42, sck=44, cs=40, freq=1000000)
+            vfs.mount(sd, "/sd")
+            print("SD 卡挂载成功")
+            return True
+        except Exception as e:
+            print(f"SD 卡挂载失败: {e}")
+            return False
+
+# 全局变量跟踪 SD 卡状态
+_sd_card_initialized = False
+_sd_card_object = None
+
+def safe_sd_mount():
+    """安全的 SD 卡挂载，避免重复初始化"""
+    global _sd_card_initialized, _sd_card_object
+    import uos
+    from machine import SDCard
+    import vfs
+    
+    # 如果已经初始化，直接返回
+    if _sd_card_initialized:
+        try:
+            uos.statvfs("/sd")
+            return True
+        except OSError:
+            # 如果检查失败，重置状态
+            _sd_card_initialized = False
+            _sd_card_object = None
+    
+    try:
+        # 检查是否已挂载
+        uos.statvfs("/sd")
+        print("SD 卡已挂载")
+        _sd_card_initialized = True
+        return True
+    except OSError:
+        print("SD 卡未挂载，尝试挂载...")
+        try:
+            # 先尝试卸载旧的挂载
+            try:
+                uos.umount("/sd")
+            except:
+                pass
+            
+            # 创建新的 SD 卡对象
+            _sd_card_object = SDCard(slot=2, miso=41, mosi=42, sck=44, cs=40, freq=1000000)
+            vfs.mount(_sd_card_object, "/sd")
+            
+            # 验证挂载
+            uos.statvfs("/sd")
+            _sd_card_initialized = True
+            print("SD 卡挂载成功")
+            return True
+        except Exception as e:
+            print(f"SD 卡挂载失败: {e}")
+            _sd_card_initialized = False
+            _sd_card_object = None
+            return False
+
+def safe_sd_unmount():
+    """安全的 SD 卡卸载"""
+    global _sd_card_initialized, _sd_card_object
+    import vfs
+    
+    if _sd_card_initialized:
+        try:
+            vfs.umount("/sd")
+            if _sd_card_object:
+                _sd_card_object.deinit()
+            print("SD 卡已卸载")
+        except Exception as e:
+            print(f"SD 卡卸载失败: {e}")
+        finally:
+            _sd_card_initialized = False
+            _sd_card_object = None
+
+'''
+
+
 
 '''
 K10扬声器类
@@ -972,6 +1298,10 @@ class Speaker(object):
 
     def play_tf_music(self, path):
         full_path = "/sd/" + path
+        if full_path.startswith("/sd/"):
+            # 使用智能挂载，自动处理重试
+            if not smart_sd_mount():
+                raise Exception("SD卡智能挂载失败")
         self.play_music(full_path)
         
     def play_music(self,path):
@@ -1016,21 +1346,24 @@ class TF_card(object):
             #self.sd = SDCard(spi_bus = self.spi_bus, cs = 40, freq = 1000000)
             self.sd = SDCard(slot=2, miso=41, mosi=42, sck=44, cs=40, freq=1000000)
             vfs.mount(self.sd, "/sd")
+
         except:
             print("SD card not detected")
     def __del__(self):
         if self.spi_bus:
             self.spi_bus = None
     def deinit(self):
+        self.sd.deinit()
         if self.spi_bus:
             self.spi_bus = None
-'''
+''' 
 K10的摄像头类
 '''
 class Camera(object):
     def __init__(self):
         self.cam = camera
         self._i2c = k10_i2c
+        
     def init(self):
         #复位摄像头
         temp = self._i2c.readfrom_mem(0x20, 0x06, 1)
@@ -1041,6 +1374,7 @@ class Camera(object):
         temp = self._i2c.readfrom_mem(0x20, 0x02, 1)
         self._i2c.writeto(0x20,bytearray([0x02, (temp[0] | 0x02)]))
         self.cam.init(0)
+
     def camera_capture(self):
         return self.cam.capture()
     def save(self):
@@ -1054,16 +1388,23 @@ class Screen(object):
         self.spi_bus = SPI(1,baudrate=40_000_000,sck=Pin(12),mosi=Pin(21))
         self.display_bus = Ili9341(spi= self.spi_bus, cs=14, dc=13,rot=dir)
         self.linewidth = 1
+        self._camera_running = False
         
     #初始化屏幕，设置方向为(0~3)
     def init(self,dir=2):
         #用来打开屏幕背光
         myi2c = I2C(0, scl=Pin(48), sda=Pin(47), freq=100000)
-
+        
+        temp = myi2c.readfrom_mem(0x20, 0x02, 1)
+        myi2c.writeto(0x20,bytearray([0x02, (temp[0] & 0x00)]))
+        time.sleep(0.01)
         temp = myi2c.readfrom_mem(0x20, 0x02, 1)
         myi2c.writeto(0x20,bytearray([0x02, (temp[0] | 0x01)]))
+
         temp = myi2c.readfrom_mem(0x20, 0x06, 1)
         myi2c.writeto(0x20,bytearray([0x06, (temp[0] & 0XFC)]))
+        
+
         self.display_bus.apply_rotation(dir)
 
         #self.screen = lv.obj()
@@ -1097,6 +1438,8 @@ class Screen(object):
         )
         #显示摄像头画面的timer
         self.camera_timer = None
+        # 记录当前图片宽高
+        self._img_wh = (240, 320)
 
     #显示指定颜色背景
     def show_bg(self,color=0xFFFFFF):
@@ -1245,51 +1588,126 @@ class Screen(object):
         lv.screen_load(self.screen)
 
     def show_camera_img(self,buf):
-        if buf is None or len(buf) != 240*320*2:
-            return
-
-        # 持久化初始化：display_buf / img_dsc / img 只创建一次
-        if not hasattr(self, 'display_buf'):
-            self.display_buf = bytearray(240*320*2)
-
-        if not hasattr(self, 'img_dsc') or self.img_dsc is None:
-            self.img_dsc = lv.image_dsc_t(
-                dict(
-                    header = dict(cf = lv.COLOR_FORMAT.RGB565, w=240, h=320),
-                    data_size = 240*320*2,
-                    data = bytes(self.display_buf)
-                )
-            )
-
-        if not hasattr(self, 'img') or self.img is None:
-            self.img = lv.image(self.screen)
-            self.img.set_src(self.img_dsc)
-
-        # 将输入帧拷贝到自有缓冲，避免依赖外部生命周期
-        if isinstance(buf, (bytes, bytearray)):
-            self.display_buf[:] = buf
-        else:
-            # 兜底：尽量从缓冲协议读取
-            b = bytes(buf)
-            if len(b) != len(self.display_buf):
+        try:
+            # 快速检查，严格匹配 240x320 RGB565 帧
+            if buf is None or len(buf) != 240*320*2:
                 return
-            self.display_buf[:] = b
 
-        # 如需RGB565字节交换可打开下一行
-        lv.draw_sw_rgb565_swap(self.display_buf, len(self.display_buf))
+            # 持久化初始化：display_buf / img_dsc / img 只创建一次
+            if not hasattr(self, 'display_buf'):
+                self.display_buf = bytearray(240*320*2)
 
-        # 更新同一个 img_dsc 的数据并刷新
-        self.img_dsc.data = bytes(self.display_buf)
-        self.img.set_src(self.img_dsc)
-        lv.refr_now(None)
+            buflen = 240*320*2
+
+            if not hasattr(self, 'img') or self.img is None:
+                self.img = lv.image(self.screen)
+                self.img.set_src(self.img_dsc)
+                try:
+                    self.img.align(lv.ALIGN.CENTER, 0, 0)
+                except:
+                    pass
+                try:
+                    lv.screen_load(self.screen)
+                except:
+                    pass
+                try:
+                    self.img.align(lv.ALIGN.CENTER, 0, 0)
+                except:
+                    pass
+                try:
+                    lv.screen_load(self.screen)
+                except:
+                    pass
+
+            # 将输入帧拷贝到自有缓冲，避免依赖外部生命周期
+            if isinstance(buf, (bytes, bytearray)):
+                self.display_buf[:buflen] = buf
+            else:
+                # 兜底：尽量从缓冲协议读取
+                b = bytes(buf)
+                if len(b) != buflen:
+                    return
+                self.display_buf[:buflen] = b
+
+            # 如需RGB565字节交换可打开下一行
+            # 按原始实现启用RGB565字节交换（若颜色不对可注释掉）
+            try:
+                lv.draw_sw_rgb565_swap(self.display_buf, buflen)
+            except:
+                pass
+
+            # 更新同一个 img_dsc 的数据并刷新
+            self.img_dsc.data = bytes(self.display_buf)
+            self.img.set_src(self.img_dsc)
+            # 确保首次已加载并可见
+            try:
+                lv.screen_load(self.screen)
+            except:
+                pass
+            
+            # 使用非阻塞刷新，避免阻塞串口通信
+            try:
+                self.img.invalidate()
+            except:
+                # 如果刷新失败，静默处理
+                pass
+            
+        except Exception as e:
+            # 在中断或异常情况下静默处理，避免影响主程序
+            pass
 
     def show_camera(self,camera):
-        self.camera_timer = lv.timer_create(lambda t: self.show_camera_img(camera.camera_capture()), 1, None)
+        # 停掉已有的定时器，避免重复
+        try:
+            if self.camera_timer is not None:
+                self.camera_timer.delete()
+        except:
+            pass
+        self.camera_timer = None
+        self._camera_running = True
+        # 以 ~30 FPS 刷新，降低CPU占用，避免阻塞串口
+        self.camera_timer = lv.timer_create(lambda t: self.show_camera_img(camera.camera_capture()), 33, None)
+
+    def stop_camera(self):
+        # 安全停止摄像头显示定时器
+        self._camera_running = False
+        try:
+            if self.camera_timer is not None:
+                self.camera_timer.delete()
+        except:
+            pass
+        self.camera_timer = None
+    
+    def show_camera_img_safe(self, buf):
+        """安全的摄像头图像显示函数，专门用于处理中断情况"""
+        try:
+            # 快速检查，避免不必要的处理
+            if buf is None or len(buf) != 240*320*2:
+                return False
+            
+            # 检查是否在中断状态，如果是则跳过显示
+            import micropython
+            if micropython.opt_level() > 0:
+                # 在优化模式下，减少处理以避免阻塞
+                return True
+            
+            # 调用原始显示函数
+            self.show_camera_img(buf)
+            return True
+            
+        except Exception as e:
+            # 静默处理所有异常，避免影响主程序
+            return False
 
     def deinit(self):
         """清理Screen对象的所有资源"""
         print("Screen deinit...")
         try:
+            # 1. 停止摄像头显示
+            try:
+                self.stop_camera()
+            except:
+                pass
             # 2. 清理LVGL对象
             if hasattr(self, 'canvas') and self.canvas:
                 self.canvas = None
@@ -1445,11 +1863,32 @@ class MqttClient():
 
     def connected(self):
         return self._connected
+    
+    def _safe_encode_utf8(self, text):
+        """安全编码UTF-8字符串"""
+        if isinstance(text, str):
+            return text.encode("utf-8")
+        elif isinstance(text, bytes):
+            return text
+        else:
+            return str(text).encode("utf-8")
+    
+    def _safe_decode_utf8(self, data):
+        """安全解码UTF-8字节数据"""
+        if isinstance(data, str):
+            return data
+        try:
+            return data.decode('utf-8')
+        except UnicodeDecodeError:
+            return data.decode('utf-8', 'replace')
 
     def publish(self, topic, content, _qos = 1):
         try:
             self.lock = True
-            self.client.publish(str(topic),str(content).encode("utf-8"),qos=_qos)
+            # 使用安全编码方法处理中文
+            topic_bytes = self._safe_encode_utf8(topic)
+            content_bytes = self._safe_encode_utf8(content)
+            self.client.publish(topic_bytes, content_bytes, qos=_qos)
             self.lock = False
         except Exception as e:
             print('publish error:{}'.format(e))
@@ -1495,8 +1934,10 @@ class MqttClient():
     def on_message(self, topic, msg):
         try:
             gc.collect()
-            topic = topic.decode('utf-8', 'ignore')
-            msg = msg.decode('utf-8', 'ignore')
+            # 使用安全解码方法处理中文
+            topic = self._safe_decode_utf8(topic)
+            msg = self._safe_decode_utf8(msg)
+            
             #print("Received '{payload}' from topic '{topic}'\n".format(payload = msg, topic = topic))
             if(topic in self.topic_msg_dict):
                 self.topic_msg_dict[topic] = msg
@@ -1550,5 +1991,169 @@ class _k10_timer(object):
             if isinstance(self._temp, aht20):
                 self._temp.measure()
             self._num = 0
+
 temp_humi = aht20()
 _k10_measure_timer =_k10_timer(temp = temp_humi)
+
+def test_sd_mount_simple():
+    """使用您之前的挂载方式测试SD卡"""
+    import uos
+    from machine import SDCard
+    import vfs
+    
+    print("=== 使用原始挂载方式测试SD卡 ===")
+    
+    try:
+        # 先卸载可能存在的挂载
+        try:
+            uos.umount("/sd")
+        except:
+            pass
+        
+        # 使用您之前的挂载方式
+        sd = SDCard(slot=2, miso=41, mosi=42, sck=44, cs=40, freq=1000000)
+        vfs.mount(sd, "/sd")
+        
+        # 验证挂载
+        uos.statvfs("/sd")
+        print("✓ SD卡挂载成功")
+        
+        # 测试文件操作
+        test_file = "/sd/test_simple.txt"
+        with open(test_file, 'w') as f:
+            f.write("test")
+        print("✓ 文件创建成功")
+        
+        # 读取文件
+        with open(test_file, 'r') as f:
+            content = f.read()
+        print(f"文件内容: {content}")
+        
+        # 删除文件
+        uos.remove(test_file)
+        print("✓ 文件删除成功")
+        
+        print("✓ 原始挂载方式测试通过")
+        return True
+        
+    except Exception as e:
+        print(f"✗ 原始挂载方式测试失败: {e}")
+        try:
+            sd.deinit()
+        except:
+            pass
+        return False
+
+'''
+I2C设备扫描器类
+'''
+class I2CScanner:
+    def __init__(self, scl_pin=22, sda_pin=21, freq=100000):
+        """初始化I2C扫描器"""
+        self.scl_pin = scl_pin
+        self.sda_pin = sda_pin
+        self.freq = freq
+        self.i2c = None
+        
+    def init_i2c(self):
+        """初始化I2C总线"""
+        try:
+            self.i2c = machine.I2C(scl=machine.Pin(self.scl_pin), 
+                                  sda=machine.Pin(self.sda_pin), 
+                                  freq=self.freq)
+            print(f"I2C初始化成功 - SCL:{self.scl_pin}, SDA:{self.sda_pin}")
+            return True
+        except Exception as e:
+            print(f"I2C初始化失败: {e}")
+            return False
+    
+    def scan_all(self):
+        """扫描所有I2C设备"""
+        if not self.i2c:
+            if not self.init_i2c():
+                return []
+        
+        devices = []
+        print("开始扫描I2C设备...")
+        
+        for addr in range(0x08, 0x78):
+            try:
+                self.i2c.writeto(addr, b'')
+                devices.append(addr)
+                print(f"发现设备: 0x{addr:02X} ({addr})")
+            except OSError:
+                pass
+            except Exception as e:
+                print(f"扫描地址0x{addr:02X}时出错: {e}")
+        
+        print(f"扫描完成，发现 {len(devices)} 个设备")
+        return devices
+    
+    def scan_common(self):
+        """扫描常见I2C设备"""
+        if not self.i2c:
+            if not self.init_i2c():
+                return []
+        
+        common_devices = {
+            0x1C: "MMA8452Q加速度计",
+            0x1D: "MMA8452Q加速度计", 
+            0x20: "PCF8574 I/O扩展器",
+            0x21: "PCF8574 I/O扩展器",
+            0x27: "LCD1602 (PCF8574)",
+            0x38: "PCF8574 I/O扩展器",
+            0x39: "PCF8574 I/O扩展器",
+            0x3C: "SSD1306 OLED显示器",
+            0x3D: "SSD1306 OLED显示器",
+            0x40: "SHT30温湿度传感器",
+            0x41: "SHT30温湿度传感器",
+            0x48: "ADS1115 ADC",
+            0x49: "ADS1115 ADC",
+            0x4A: "ADS1115 ADC", 
+            0x4B: "ADS1115 ADC",
+            0x50: "EEPROM",
+            0x51: "EEPROM",
+            0x57: "AT24C32 EEPROM",
+            0x68: "MPU6050陀螺仪/加速度计",
+            0x69: "MPU6050陀螺仪/加速度计",
+            0x76: "BMP280气压传感器",
+            0x77: "BMP280气压传感器"
+        }
+        
+        found_devices = []
+        print("扫描常见I2C设备...")
+        
+        for addr, device_name in common_devices.items():
+            try:
+                self.i2c.writeto(addr, b'')
+                found_devices.append(addr)
+                print(f"发现设备: 0x{addr:02X} ({addr}) - {device_name}")
+            except OSError:
+                pass
+            except Exception as e:
+                print(f"扫描地址0x{addr:02X}时出错: {e}")
+        
+        print(f"常见设备扫描完成，发现 {len(found_devices)} 个设备")
+        return found_devices
+    
+    def test_device(self, addr):
+        """测试特定设备"""
+        if not self.i2c:
+            return {"status": "failed", "error": "I2C未初始化"}
+        
+        try:
+            # 尝试写入
+            self.i2c.writeto(addr, b'')
+            
+            # 尝试读取
+            try:
+                data = self.i2c.readfrom(addr, 1)
+                return {"status": "success", "readable": True, "data": data.hex()}
+            except Exception as e:
+                return {"status": "success", "readable": False, "error": str(e)}
+                
+        except Exception as e:
+            return {"status": "failed", "error": str(e)}
+
+# 创建全局I2C扫描器实例
+#i2c_scanner = I2CScanner()

@@ -375,7 +375,8 @@ static void mp_machine_i2s_init_helper(machine_i2s_obj_t *self, mp_arg_val_t *ar
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(self->rate),
         .slot_cfg = slot_cfg,
         .gpio_cfg = {
-            .mclk = I2S_GPIO_UNUSED,
+            //.mclk = I2S_GPIO_UNUSED,
+            .mclk = 3,
             .bclk = self->sck,
             .ws = self->ws,
             .invert_flags = {

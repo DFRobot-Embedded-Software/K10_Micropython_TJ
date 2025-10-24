@@ -331,13 +331,9 @@ extern "C" __attribute__((weak)) void init_ai(void)
 
 extern "C" __attribute__((weak)) void camera_start_task(void* arg) {
     
-    if (!camera_queue) {
-        camera_queue = xQueueCreate(10, sizeof(camera_fb_t *)); // 最多缓存10个结果
-    }
-    
     while (1) {
         if (free_camera_flag == 1) {
-            vTaskDelay(pdMS_TO_TICKS(100)); // 等待100ms后重试
+            //vTaskDelay(pdMS_TO_TICKS(100)); // 等待100ms后重试
             break;
         }
         camera_fb_t *frame = esp_camera_fb_get();
@@ -347,6 +343,7 @@ extern "C" __attribute__((weak)) void camera_start_task(void* arg) {
         vTaskDelay(pdMS_TO_TICKS(10));
     }
     // 注意：不在这里调用esp_camera_deinit()，由mp_deinit_ai统一处理
+    //esp_camera_deinit();
     vTaskDelete(NULL);
 }
 
@@ -393,6 +390,7 @@ extern "C" __attribute__((weak))  void face_recognize_start_task(void* arg) {
                 std::list<dl::detect::result_t> &detect_candidates = detectorFace.infer((uint16_t*)g_aligned_buffer, {(int)frame->height, (int)frame->width, 3});
                 std::list<dl::detect::result_t> &detect_results = detectorFace2.infer((uint16_t*)g_aligned_buffer, {(int)frame->height, (int)frame->width, 3}, detect_candidates);
                 latency.end();
+                
                 if (detect_results.size() > 0) {
                     g_ai_data.face_flag = true;
                     std::list<dl::detect::result_t>::iterator first_result = detect_results.begin();

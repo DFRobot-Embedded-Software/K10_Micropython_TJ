@@ -4,6 +4,8 @@ include("$(MPY_DIR)/extmod/asyncio")
 #freeze("$(MPY_DIR)/examples/usercmodule/lv_binding_micropython/driver/esp32")
 freeze("$(MPY_DIR)/examples/usercmodule/lv_binding_micropython/driver/generic")
 freeze("$(MPY_DIR)/examples/usercmodule/lv_binding_micropython/lib")
+freeze("$(MPY_DIR)/examples/usercmodule/k10_asr")
+freeze("$(MPY_DIR)/examples/usercmodule/k10_face")
 # Useful networking-related packages.
 require("bundle-networking")
 

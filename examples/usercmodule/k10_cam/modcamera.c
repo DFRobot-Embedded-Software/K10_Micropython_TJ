@@ -133,7 +133,8 @@
          (xclk_freq != XCLK_FREQ_20MHz)) {
          mp_raise_ValueError(MP_ERROR_TEXT("xclk frequency is not valid"));
      }
- 
+     esp_err_t err = esp_camera_deinit();
+
      // configuring camera
      camera->config.pin_d0 = args[ARG_d0].u_int;
      camera->config.pin_d1 = args[ARG_d1].u_int;
@@ -163,8 +164,8 @@
      camera->config.fb_count = args[ARG_FBSIZE].u_int;      //if more than one, i2s runs in continuous mode. Use only with JPEG
      camera->config.fb_location = args[ARG_FBLOC].u_int;
      camera->config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
-     esp_err_t err = esp_camera_init(&camera->config);
-     
+     //esp_err_t err = esp_camera_init(&camera->config);
+     err = esp_camera_init(&camera->config);
      if (err != ESP_OK) {
          ESP_LOGE(TAG, "Camera Init Failed");
          mp_raise_msg(&mp_type_OSError, MP_ERROR_TEXT("Camera Init Failed"));

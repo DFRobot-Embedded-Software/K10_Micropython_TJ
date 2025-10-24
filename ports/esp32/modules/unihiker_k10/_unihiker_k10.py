@@ -6,7 +6,7 @@ from machine import Servo,I2C
 import machine,onewire, struct,gc
 from ds18x20 import DS18X20
 from hcsr04 import HCSR04
-from dht import DHT11
+from dht import DHT11, DHT22
 gc.collect()    
 
 '''
@@ -672,27 +672,66 @@ class ultrasonic(HCSR04):
         return self.dev.distance_cm()
 
 '''
-外置dht11温湿度传感器驱动类
+外置DHT11/DHT22温湿度传感器驱动类
 '''
 class dht(object):
-    def __init__(self,pin):
+    def __init__(self, pin, sensor_type='DHT11'):
+        """初始化DHT传感器
+        
+        Args:
+            pin: 传感器连接的引脚
+            sensor_type: 传感器类型，'DHT11' 或 'DHT22'
+        """
         self._pin = pins_remap_k10[pin]
-        self._dht = DHT11(Pin(self._pin))
+        self._sensor_type = sensor_type.upper()
+        
+        if self._sensor_type == 'DHT11':
+            self._dht = DHT11(Pin(self._pin))
+        elif self._sensor_type == 'DHT22':
+            self._dht = DHT22(Pin(self._pin))
+        else:
+            raise ValueError("sensor_type must be 'DHT11' or 'DHT22'")
+            
         self._dht.measure()
-    def read(self):
-        self._dht.measure()
-        return self._dht.temperature(),self._dht.humidity()
+        
+    def read(self, max_retries=3, retry_delay=0.1):
+        """读取温湿度数据，带重试机制
+        
+        Args:
+            max_retries: 最大重试次数，默认3次
+            retry_delay: 重试间隔时间（秒），默认0.1秒
+            
+        Returns:
+            tuple: (温度, 湿度)
+        """
+        import time
+        
+        for attempt in range(max_retries):
+            try:
+                self._dht.measure()
+                return self._dht.temperature(), self._dht.humidity()
+            except OSError as e:
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    raise e
+                    
+    def get_sensor_type(self):
+        """获取传感器类型"""
+        return self._sensor_type
 
 light = Light()
-mic = Mic()
+
 speaker = Speaker()
-#tf_card = TF_card()
 screen = Screen()
+acce = accelerometer()
+rgb = rgb_board()
+mic = Mic()
 #camera = Camera()
 #wifi = WiFi()
 #mqttclient = MqttClient()
-acce = accelerometer()
-rgb = rgb_board()
+#tf_card = TF_card()
 
 #th = task_handler.TaskHandler()
 
