@@ -1394,11 +1394,17 @@ class Screen(object):
     def init(self,dir=2):
         #用来打开屏幕背光
         myi2c = I2C(0, scl=Pin(48), sda=Pin(47), freq=100000)
-
+        
+        temp = myi2c.readfrom_mem(0x20, 0x02, 1)
+        myi2c.writeto(0x20,bytearray([0x02, (temp[0] & 0x00)]))
+        time.sleep(0.01)
         temp = myi2c.readfrom_mem(0x20, 0x02, 1)
         myi2c.writeto(0x20,bytearray([0x02, (temp[0] | 0x01)]))
+
         temp = myi2c.readfrom_mem(0x20, 0x06, 1)
         myi2c.writeto(0x20,bytearray([0x06, (temp[0] & 0XFC)]))
+        
+
         self.display_bus.apply_rotation(dir)
 
         #self.screen = lv.obj()
@@ -1857,11 +1863,32 @@ class MqttClient():
 
     def connected(self):
         return self._connected
+    
+    def _safe_encode_utf8(self, text):
+        """安全编码UTF-8字符串"""
+        if isinstance(text, str):
+            return text.encode("utf-8")
+        elif isinstance(text, bytes):
+            return text
+        else:
+            return str(text).encode("utf-8")
+    
+    def _safe_decode_utf8(self, data):
+        """安全解码UTF-8字节数据"""
+        if isinstance(data, str):
+            return data
+        try:
+            return data.decode('utf-8')
+        except UnicodeDecodeError:
+            return data.decode('utf-8', 'replace')
 
     def publish(self, topic, content, _qos = 1):
         try:
             self.lock = True
-            self.client.publish(str(topic),str(content).encode("utf-8"),qos=_qos)
+            # 使用安全编码方法处理中文
+            topic_bytes = self._safe_encode_utf8(topic)
+            content_bytes = self._safe_encode_utf8(content)
+            self.client.publish(topic_bytes, content_bytes, qos=_qos)
             self.lock = False
         except Exception as e:
             print('publish error:{}'.format(e))
@@ -1907,8 +1934,10 @@ class MqttClient():
     def on_message(self, topic, msg):
         try:
             gc.collect()
-            topic = topic.decode('utf-8', 'ignore')
-            msg = msg.decode('utf-8', 'ignore')
+            # 使用安全解码方法处理中文
+            topic = self._safe_decode_utf8(topic)
+            msg = self._safe_decode_utf8(msg)
+            
             #print("Received '{payload}' from topic '{topic}'\n".format(payload = msg, topic = topic))
             if(topic in self.topic_msg_dict):
                 self.topic_msg_dict[topic] = msg
@@ -2014,3 +2043,117 @@ def test_sd_mount_simple():
         except:
             pass
         return False
+
+'''
+I2C设备扫描器类
+'''
+class I2CScanner:
+    def __init__(self, scl_pin=22, sda_pin=21, freq=100000):
+        """初始化I2C扫描器"""
+        self.scl_pin = scl_pin
+        self.sda_pin = sda_pin
+        self.freq = freq
+        self.i2c = None
+        
+    def init_i2c(self):
+        """初始化I2C总线"""
+        try:
+            self.i2c = machine.I2C(scl=machine.Pin(self.scl_pin), 
+                                  sda=machine.Pin(self.sda_pin), 
+                                  freq=self.freq)
+            print(f"I2C初始化成功 - SCL:{self.scl_pin}, SDA:{self.sda_pin}")
+            return True
+        except Exception as e:
+            print(f"I2C初始化失败: {e}")
+            return False
+    
+    def scan_all(self):
+        """扫描所有I2C设备"""
+        if not self.i2c:
+            if not self.init_i2c():
+                return []
+        
+        devices = []
+        print("开始扫描I2C设备...")
+        
+        for addr in range(0x08, 0x78):
+            try:
+                self.i2c.writeto(addr, b'')
+                devices.append(addr)
+                print(f"发现设备: 0x{addr:02X} ({addr})")
+            except OSError:
+                pass
+            except Exception as e:
+                print(f"扫描地址0x{addr:02X}时出错: {e}")
+        
+        print(f"扫描完成，发现 {len(devices)} 个设备")
+        return devices
+    
+    def scan_common(self):
+        """扫描常见I2C设备"""
+        if not self.i2c:
+            if not self.init_i2c():
+                return []
+        
+        common_devices = {
+            0x1C: "MMA8452Q加速度计",
+            0x1D: "MMA8452Q加速度计", 
+            0x20: "PCF8574 I/O扩展器",
+            0x21: "PCF8574 I/O扩展器",
+            0x27: "LCD1602 (PCF8574)",
+            0x38: "PCF8574 I/O扩展器",
+            0x39: "PCF8574 I/O扩展器",
+            0x3C: "SSD1306 OLED显示器",
+            0x3D: "SSD1306 OLED显示器",
+            0x40: "SHT30温湿度传感器",
+            0x41: "SHT30温湿度传感器",
+            0x48: "ADS1115 ADC",
+            0x49: "ADS1115 ADC",
+            0x4A: "ADS1115 ADC", 
+            0x4B: "ADS1115 ADC",
+            0x50: "EEPROM",
+            0x51: "EEPROM",
+            0x57: "AT24C32 EEPROM",
+            0x68: "MPU6050陀螺仪/加速度计",
+            0x69: "MPU6050陀螺仪/加速度计",
+            0x76: "BMP280气压传感器",
+            0x77: "BMP280气压传感器"
+        }
+        
+        found_devices = []
+        print("扫描常见I2C设备...")
+        
+        for addr, device_name in common_devices.items():
+            try:
+                self.i2c.writeto(addr, b'')
+                found_devices.append(addr)
+                print(f"发现设备: 0x{addr:02X} ({addr}) - {device_name}")
+            except OSError:
+                pass
+            except Exception as e:
+                print(f"扫描地址0x{addr:02X}时出错: {e}")
+        
+        print(f"常见设备扫描完成，发现 {len(found_devices)} 个设备")
+        return found_devices
+    
+    def test_device(self, addr):
+        """测试特定设备"""
+        if not self.i2c:
+            return {"status": "failed", "error": "I2C未初始化"}
+        
+        try:
+            # 尝试写入
+            self.i2c.writeto(addr, b'')
+            
+            # 尝试读取
+            try:
+                data = self.i2c.readfrom(addr, 1)
+                return {"status": "success", "readable": True, "data": data.hex()}
+            except Exception as e:
+                return {"status": "success", "readable": False, "error": str(e)}
+                
+        except Exception as e:
+            return {"status": "failed", "error": str(e)}
+
+# 创建全局I2C扫描器实例
+#i2c_scanner = I2CScanner()
