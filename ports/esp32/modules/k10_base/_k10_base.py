@@ -1863,6 +1863,24 @@ class MqttClient():
 
     def connected(self):
         return self._connected
+    
+    def _safe_encode_utf8(self, text):
+        """安全编码UTF-8字符串"""
+        if isinstance(text, str):
+            return text.encode("utf-8")
+        elif isinstance(text, bytes):
+            return text
+        else:
+            return str(text).encode("utf-8")
+    
+    def _safe_decode_utf8(self, data):
+        """安全解码UTF-8字节数据"""
+        if isinstance(data, str):
+            return data
+        try:
+            return data.decode('utf-8')
+        except UnicodeDecodeError:
+            return data.decode('utf-8', 'replace')
 
     def _safe_encode_utf8(self, text):
         """安全编码UTF-8字符串"""
@@ -1937,6 +1955,7 @@ class MqttClient():
             gc.collect()
             topic = self._safe_decode_utf8(topic)
             msg = self._safe_decode_utf8(msg)
+
             #print("Received '{payload}' from topic '{topic}'\n".format(payload = msg, topic = topic))
             if(topic in self.topic_msg_dict):
                 self.topic_msg_dict[topic] = msg
