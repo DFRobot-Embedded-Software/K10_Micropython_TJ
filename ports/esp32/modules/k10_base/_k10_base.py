@@ -1395,10 +1395,16 @@ class Screen(object):
         #用来打开屏幕背光
         myi2c = I2C(0, scl=Pin(48), sda=Pin(47), freq=100000)
 
-        temp = myi2c.readfrom_mem(0x20, 0x02, 1)
-        myi2c.writeto(0x20,bytearray([0x02, (temp[0] | 0x01)]))
         temp = myi2c.readfrom_mem(0x20, 0x06, 1)
         myi2c.writeto(0x20,bytearray([0x06, (temp[0] & 0XFC)]))
+        time.sleep(0.01)
+        temp = myi2c.readfrom_mem(0x20, 0x02, 1)
+        myi2c.writeto(0x20,bytearray([0x02, (temp[0] | 0x00)]))
+        time.sleep(0.01)
+        temp = myi2c.readfrom_mem(0x20, 0x02, 1)
+        myi2c.writeto(0x20,bytearray([0x02, (temp[0] | 0x01)]))
+        time.sleep(0.01)
+
         self.display_bus.apply_rotation(dir)
 
         #self.screen = lv.obj()
@@ -1858,10 +1864,32 @@ class MqttClient():
     def connected(self):
         return self._connected
 
+    def _safe_encode_utf8(self, text):
+        """安全编码UTF-8字符串"""
+        if isinstance(text, str):
+            return text.encode("utf-8")
+        elif isinstance(text, bytes):
+            return text
+        else:
+            return str(text).encode("utf-8")
+    
+    def _safe_decode_utf8(self, data):
+        """安全解码UTF-8字节数据"""
+        if isinstance(data, str):
+            return data
+        try:
+            return data.decode('utf-8')
+        except UnicodeDecodeError:
+            return data.decode('utf-8', 'replace')
+
+
+
     def publish(self, topic, content, _qos = 1):
         try:
             self.lock = True
-            self.client.publish(str(topic),str(content).encode("utf-8"),qos=_qos)
+            topic_bytes = self._safe_encode_utf8(topic)
+            content_bytes = self._safe_encode_utf8(content)
+            self.client.publish(topic_bytes, content_bytes, qos=_qos)
             self.lock = False
         except Exception as e:
             print('publish error:{}'.format(e))
@@ -1907,8 +1935,8 @@ class MqttClient():
     def on_message(self, topic, msg):
         try:
             gc.collect()
-            topic = topic.decode('utf-8', 'ignore')
-            msg = msg.decode('utf-8', 'ignore')
+            topic = self._safe_decode_utf8(topic)
+            msg = self._safe_decode_utf8(msg)
             #print("Received '{payload}' from topic '{topic}'\n".format(payload = msg, topic = topic))
             if(topic in self.topic_msg_dict):
                 self.topic_msg_dict[topic] = msg
