@@ -145,6 +145,55 @@ class Accelerometer(object):
         return self.shake_status
 
 '''
+K10box加速度计适配器类，使k10_box.acc接口与Accelerometer兼容
+'''
+class K10BoxAccelAdapter(object):
+    # 手势常量，与Accelerometer类保持一致
+    SHANK = 0
+    SCREEN_UP = 1
+    SCREEN_DOWN = 2
+    TILT_LEFT = 3
+    TILT_RIGHT = 4
+    TILT_FORWARD = 5
+    TILT_BACK = 6
+    GESTURE_NONE = 7
+    
+    def __init__(self):
+        try:
+            import k10_box
+            self._acc = k10_box.acc
+            self.shake_status = False
+            self._gesture = self.GESTURE_NONE
+            self.X = 0.0
+            self.Y = 0.0
+            self.Z = 0.0
+        except Exception:
+            self._acc = None
+    
+    def _measure(self):
+        if self._acc is None or not self._acc.available:
+            self.X = 0.0
+            self.Y = 0.0
+            self.Z = 0.0
+            return
+        # k10_box.acc返回的是mg单位，转换为g单位（除以1000）
+        self.X = self._acc.read_x() / 1000.0
+        self.Y = self._acc.read_y() / 1000.0
+        self.Z = self._acc.read_z() / 1000.0
+    
+    def x(self):
+        return self.X
+    
+    def y(self):
+        return self.Y
+    
+    def z(self):
+        return self.Z
+    
+    def shake(self):
+        return self.shake_status
+
+'''
 为了兼容上层API使用做的类
 '''
 class accelerometer(object):
@@ -166,7 +215,7 @@ class accelerometer(object):
         else:
             #K10box
             self.tim = None
-            self.accel_sensor = None
+            self.accel_sensor = K10BoxAccelAdapter()
 
     def timer_callback(self,_):
         self.tim_count += 1 
@@ -179,6 +228,8 @@ class accelerometer(object):
 
     def accelerometer_callback(self):
         '''加速度计'''
+        if self.accel_sensor is None:
+            return
         if self._is_shaked:
             self._count_shaked += 1
             if self._count_shaked == 5: 
@@ -201,58 +252,72 @@ class accelerometer(object):
             self.accel_sensor.shake_status = True
         
     def X(self):
+        if self.accel_sensor is None:
+            return 0.0
+        self.accel_sensor._measure()
         return self.accel_sensor.x()
     
     def Y(self):
+        if self.accel_sensor is None:
+            return 0.0
+        self.accel_sensor._measure()
         return self.accel_sensor.y()
     
     def Z(self):
+        if self.accel_sensor is None:
+            return 0.0
+        self.accel_sensor._measure()
         return self.accel_sensor.z()
     
     def read_x(self):
+        if self.accel_sensor is None:
+            return 0.0
+        self.accel_sensor._measure()
         return self.accel_sensor.x()
     
     def read_y(self):
+        if self.accel_sensor is None:
+            return 0.0
+        self.accel_sensor._measure()
         return self.accel_sensor.y()
     
     def read_z(self):
+        if self.accel_sensor is None:
+            return 0.0
+        self.accel_sensor._measure()
         return self.accel_sensor.z()
     
     def shake(self):
+        if self.accel_sensor is None:
+            return False
         return self.accel_sensor.shake()
+    
     def gesture(self):
+        if self.accel_sensor is None:
+            return 7  # GESTURE_NONE
         return self.accel_sensor._gesture
     def status(self,status=""):
+        if self.accel_sensor is None:
+            return False
+        # 使用常量值，与Accelerometer类保持一致
+        TILT_FORWARD = 5
+        TILT_BACK = 6
+        TILT_LEFT = 3
+        TILT_RIGHT = 4
+        SCREEN_UP = 1
+        SCREEN_DOWN = 2
         if status is "forward":
-            if self.gesture() == self.accel_sensor.TILT_FORWARD:
-                return True
-            else:
-                return False
+            return self.gesture() == TILT_FORWARD
         elif status is "back":
-            if self.gesture() == self.accel_sensor.TILT_BACK:
-                return True
-            else:
-                return False
+            return self.gesture() == TILT_BACK
         elif status is "left":
-            if self.gesture() == self.accel_sensor.TILT_LEFT:
-                return True
-            else:
-                return False
+            return self.gesture() == TILT_LEFT
         elif status is "right":
-            if self.gesture() == self.accel_sensor.TILT_RIGHT:
-                return True
-            else:
-                return False
+            return self.gesture() == TILT_RIGHT
         elif status is "up":
-            if self.gesture() == self.accel_sensor.SCREEN_UP:
-                return True
-            else:
-                return False
+            return self.gesture() == SCREEN_UP
         elif status is "down":
-            if self.gesture() == self.accel_sensor.SCREEN_DOWN:
-                return True
-            else:
-                return False
+            return self.gesture() == SCREEN_DOWN
         else:
             return False
 

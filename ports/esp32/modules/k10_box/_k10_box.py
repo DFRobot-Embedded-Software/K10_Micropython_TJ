@@ -209,17 +209,26 @@ class qmi8658(object):
         self.addr = 0x6B
         self.ssvtA = 1<<12
         self.ssvtG = 32
-        self._read_qmi8658c_id()
-        self._set_qmi8658c_mode(0x00)
-        self._set_qmi8658c_acc_config(self.QMI8658_ACCRANGE_8G, self.QMI8658_ACCODR_250HZ)
-        self._set_qmi8658c_gyro_config(self.QMI8658_GRYORANG_1024DPS, self.QMI8658_GRYOODR_250HZ)
-        self._set_qmi8658c_mode(0x03)
+        self.available = False
         self.accX = 0
         self.accY = 0
         self.accZ = 0
         self.gyroX = 0
         self.gyroY = 0
         self.gyroZ = 0
+        # 检查 I2C 总线上是否存在 0x6B 地址的设备
+        try:
+            devices = self.i2c.scan()
+            if self.addr in devices:
+                self.available = True
+                self._read_qmi8658c_id()
+                self._set_qmi8658c_mode(0x00)
+                self._set_qmi8658c_acc_config(self.QMI8658_ACCRANGE_8G, self.QMI8658_ACCODR_250HZ)
+                self._set_qmi8658c_gyro_config(self.QMI8658_GRYORANG_1024DPS, self.QMI8658_GRYOODR_250HZ)
+                self._set_qmi8658c_mode(0x03)
+        except Exception:
+            # 扫描失败，设备不可用
+            self.available = False
         
 
     def _set_qmi8658c_mode(self,mode):
@@ -256,40 +265,60 @@ class qmi8658(object):
             reg_value = 0xC0
             self.i2c.writeto_mem(self.addr, 0x09, bytearray([reg_value]))
     def _read_qmi8658c_xyz(self):
-        status = self.i2c.readfrom_mem(self.addr, 0x2E, 1)
-        if (status[0] & 0x03):
-            temp = self.i2c.readfrom_mem(self.addr, 0x35, 12)
-            self.accX = struct.unpack('>h', bytes([temp[1], temp[0]]))[0]
-            self.accY = struct.unpack('>h', bytes([temp[3], temp[2]]))[0]
-            self.accZ = struct.unpack('>h', bytes([temp[5], temp[4]]))[0]
-            self.gyroX = struct.unpack('>h', bytes([temp[7], temp[6]]))[0]
-            self.gyroY = struct.unpack('>h', bytes([temp[9], temp[8]]))[0]
-            self.gyroZ = struct.unpack('>h', bytes([temp[11], temp[10]]))[0]
+        if not self.available:
+            return
+        try:
+            status = self.i2c.readfrom_mem(self.addr, 0x2E, 1)
+            if (status[0] & 0x03):
+                temp = self.i2c.readfrom_mem(self.addr, 0x35, 12)
+                self.accX = struct.unpack('>h', bytes([temp[1], temp[0]]))[0]
+                self.accY = struct.unpack('>h', bytes([temp[3], temp[2]]))[0]
+                self.accZ = struct.unpack('>h', bytes([temp[5], temp[4]]))[0]
+                self.gyroX = struct.unpack('>h', bytes([temp[7], temp[6]]))[0]
+                self.gyroY = struct.unpack('>h', bytes([temp[9], temp[8]]))[0]
+                self.gyroZ = struct.unpack('>h', bytes([temp[11], temp[10]]))[0]
+        except Exception:
+            # 读取失败，保持当前值不变
+            pass
     #单位mg
     def read_acc_x(self):
+        if not self.available:
+            return 0.0
         self._read_qmi8658c_xyz()
         return (self.accX * 1000.0)/self.ssvtA
 
     def read_acc_y(self):
+        if not self.available:
+            return 0.0
         self._read_qmi8658c_xyz()
         return (self.accY * 1000.0)/self.ssvtA
     
     def read_acc_z(self):
+        if not self.available:
+            return 0.0
         self._read_qmi8658c_xyz()
         return (self.accZ * 1000.0)/self.ssvtA
     #单位dps
     def read_gyro_x(self):
+        if not self.available:
+            return 0.0
         self._read_qmi8658c_xyz()
         return (self.gyroX * 1.0)/self.ssvtG
     
     def read_gyro_y(self):
+        if not self.available:
+            return 0.0
         self._read_qmi8658c_xyz()
         return (self.gyroY * 1.0)/self.ssvtG
 
     def read_gyro_z(self):
+        if not self.available:
+            return 0.0
         self._read_qmi8658c_xyz()
         return (self.gyroZ * 1.0)/self.ssvtG
     def read_acc_streng(self):
+        if not self.available:
+            return 0.0
         self._read_qmi8658c_xyz()
         x = (self.accX * 1000.0)/self.ssvtA
         y = (self.accY * 1000.0)/self.ssvtA
