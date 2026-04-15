@@ -122,9 +122,9 @@ static mp_obj_t mp_camera_start(void) {
     config.pin_reset = CAMERA_PIN_RESET;
     config.xclk_freq_hz = XCLK_FREQ_HZ;//XCLK_FREQ_HZ
     config.pixel_format = PIXFORMAT_RGB565;
-    config.frame_size = FRAMESIZE_QVGA;
+    config.frame_size = FRAMESIZE_QVGA; //FRAMESIZE_QQVGA;  /* 160x120，先连 WiFi 时内部/DMA 内存紧张，用较小分辨率 */
     config.jpeg_quality = 5;
-    config.fb_count = 2; // 减少缓冲区数量，节省内存
+    config.fb_count = 1;  /* 单缓冲，节省 DMA 与 PSRAM，与 WiFi 共存 */
 
     config.fb_location = CAMERA_FB_IN_PSRAM;
     config.grab_mode = CAMERA_GRAB_WHEN_EMPTY;
@@ -145,7 +145,7 @@ static mp_obj_t mp_camera_start(void) {
     }
     
     // 创建摄像头任务
-    BaseType_t result = xTaskCreatePinnedToCore(camera_start_task, "camera_start_task", 1024*16, NULL, 1, &camera_start_task_handle, 0);
+    BaseType_t result = xTaskCreatePinnedToCore(camera_start_task, "camera_start_task", 1024*8, NULL, 1, &camera_start_task_handle, 0);
     if (result != pdPASS) {
         mp_print_face_cstr("Failed to create camera task\n");
         camera_start_task_handle = NULL;
@@ -160,7 +160,7 @@ static MP_DEFINE_CONST_FUN_OBJ_0(mp_camera_start_obj, mp_camera_start);
 // 启动任务
 static mp_obj_t mp_face_recognize_start(void) {
     init_ai_flag = 1;
-    xTaskCreatePinnedToCore(face_recognize_start_task, "face_recognize_start_task", 1024*16, NULL, 1, &face_recognize_task_handle, 0);
+    xTaskCreatePinnedToCore(face_recognize_start_task, "face_recognize_start_task", 1024*8, NULL, 1, &face_recognize_task_handle, 0);
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(mp_face_recognize_start_obj, mp_face_recognize_start);
@@ -191,6 +191,7 @@ static mp_obj_t mp_reset_faces(void) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(mp_reset_faces_obj, mp_reset_faces);
 
+/* 若需同时使用 WiFi 与 AI/摄像头：请先连接 WiFi（如 wifi.connect(ssid, pwd)），再调用 init_ai/camera_start/code_scanner，否则易因内部 RAM 不足导致 "Wifi Out of Memory"。*/
 static mp_obj_t mp_init_ai(void) {
     init_ai_flag = 0;
     free_ai_flag = 0;
@@ -213,7 +214,7 @@ static MP_DEFINE_CONST_FUN_OBJ_0(mp_init_ai_obj, mp_init_ai);
 
 static mp_obj_t mp_cat_detect(void) {
     init_ai_flag = 1;
-    xTaskCreatePinnedToCore(cat_detect_task, "cat_detect_task", 1024*16, NULL, 1, &cat_detect_task_handle, 0);
+    xTaskCreatePinnedToCore(cat_detect_task, "cat_detect_task", 1024*8, NULL, 1, &cat_detect_task_handle, 0);
     return mp_const_none;
 }
 static MP_DEFINE_CONST_FUN_OBJ_0(mp_cat_detect_obj, mp_cat_detect);
@@ -245,8 +246,10 @@ static mp_obj_t mp_camera_capture(void) {
                 // 如果创建bytes对象失败，返回None
             }
         }
-    }else{
-        if (xQueueReceive(camera_output_queue, &frame, pdMS_TO_TICKS(10))) { // 短超时，避免阻塞Python主循环
+    } else {
+        // AI任务运行时优先取处理后的输出帧；若暂时无帧，回退到原始相机队列保证预览不断流。
+        if (xQueueReceive(camera_output_queue, &frame, pdMS_TO_TICKS(10))
+            || xQueueReceive(camera_queue, &frame, pdMS_TO_TICKS(2))) {
             if (frame) {
                 mp_obj_t image = mp_obj_new_bytes(frame->buf, frame->len);
                 esp_camera_fb_return(frame); // 释放帧缓冲区

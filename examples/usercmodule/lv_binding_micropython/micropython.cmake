@@ -45,8 +45,6 @@ if (DEFINED LV_CONF_DIR)
     target_include_directories(usermod_lvgl INTERFACE ${LV_CONF_DIR})
 endif()
 
-file(WRITE ${LV_MP} "")
-
 target_link_libraries(usermod_lvgl INTERFACE lvgl_interface)
 
 # # # make usermod (target declared by Micropython for all user compiled modules) link to bindings

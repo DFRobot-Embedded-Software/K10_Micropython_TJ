@@ -49,7 +49,7 @@ typedef struct _ai_data_obj_t {
 #define CAMERA_PIN_VSYNC 4
 #define CAMERA_PIN_HREF 5
 #define CAMERA_PIN_PCLK 17
-#define XCLK_FREQ_HZ 10000000
+#define XCLK_FREQ_HZ 15000000
 
 #define I2C_MASTER_SCL_IO    GPIO_NUM_48
 #define I2C_MASTER_SDA_IO    GPIO_NUM_47

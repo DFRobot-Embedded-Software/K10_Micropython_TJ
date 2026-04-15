@@ -3,11 +3,11 @@ from k10_base import Light,Mic,Speaker,TF_card,Screen,Camera,WiFi,MqttClient,Tim
 from k10_base import k10_i2c, pins_remap_k10
 from neopixel import NeoPixel
 from machine import Servo,I2C
-import machine,onewire, struct,gc
+import machine,onewire, struct,gc,math
 from ds18x20 import DS18X20
 from hcsr04 import HCSR04
 from dht import DHT11, DHT22
-gc.collect()    
+gc.collect()  
 
 '''
 六轴的驱动类
@@ -31,6 +31,8 @@ class Accelerometer(object):
         self.Z = 0.0
         self._begin()
         self._measure()
+        self.ssvtA = 1 << 12
+        self.available = True
 
     def _begin(self):
         buf = self._read_bytes(0x24, 1)
@@ -95,25 +97,38 @@ class Accelerometer(object):
         return rslt
     def _writeReg(self, reg, value):
         self._i2c.writeto_mem(self._addr, reg, value.to_bytes(1, 'little'))
+
     def _measure(self):
         tempbuf = self._read_bytes(0x27,1)
         if (tempbuf[0] & 0x0F) == 0x0F:
             accbuf = self._read_bytes(0xA8, 6)
-            self.X = (accbuf[1]<<8 | accbuf[0]) >> 4
-            self.Y = (accbuf[3]<<8 | accbuf[2]) >> 4
-            self.Z = (accbuf[5]<<8 | accbuf[4]) >> 4
-            if (self.X & 0x800) == 0x800:
-                self.X -= 4096
-            if (self.Y & 0x800) == 0x800:
-                self.Y -= 4096
-            if (self.Z & 0x800) == 0x800:
-                self.Z -= 4096
-            self.X = self.X / 1024.0
-            self.Y = self.Y / 1024.0
-            self.Z = self.Z / 1024.0
+    
+            # 原始加速度 raw 12-bit（整数）
+            rawX = (accbuf[1] << 8 | accbuf[0]) >> 4
+            rawY = (accbuf[3] << 8 | accbuf[2]) >> 4
+            rawZ = (accbuf[5] << 8 | accbuf[4]) >> 4
+    
+            # 补码处理，保持整数
+            if (rawX & 0x800):
+                rawX -= 4096
+            if (rawY & 0x800):
+                rawY -= 4096
+            if (rawZ & 0x800):
+                rawZ -= 4096
+    
+            # 保存原始整数值（位运算用）
+            self.rawX = rawX
+            self.rawY = rawY
+            self.rawZ = rawZ
+    
+            # g 单位浮点（显示用）
+            self.X = rawX
+            self.Y = rawY
+            self.Z = rawZ
+    
+        # 手势部分保持不变
         tempbuf = self._read_bytes(0x35,1)
-
-        if(tempbuf[0] & 0x60) == 0x60:
+        if   (tempbuf[0] & 0x60) == 0x60:
             self._gesture = self.SCREEN_DOWN
         elif (tempbuf[0] & 0x50) == 0x50:
             self._gesture = self.SCREEN_UP
@@ -127,7 +142,7 @@ class Accelerometer(object):
             self._gesture = self.TILT_BACK
         elif (tempbuf[0] != 0):
             self._gesture = self.SHANK
-       
+    
 
     def x(self):
         #self.X = _accelerometer.get_x()
@@ -140,9 +155,15 @@ class Accelerometer(object):
     def z(self):
         #self.Z = _accelerometer.get_z()
         return self.Z
+    
+    def gesture(self):
+        return self._gesture
 
-    def shake(self):
-        return self.shake_status
+    def strength(self):
+        x = self.X 
+        y = self.Y
+        z = self.Z
+        return math.sqrt(x*x + y*y + z*z)
 
 '''
 K10box加速度计适配器类，使k10_box.acc接口与Accelerometer兼容
@@ -167,19 +188,30 @@ class K10BoxAccelAdapter(object):
             self.X = 0.0
             self.Y = 0.0
             self.Z = 0.0
+            self.ssvtA = 1 << 12
+            self.available = True
         except Exception:
             self._acc = None
     
     def _measure(self):
         if self._acc is None or not self._acc.available:
+            self.rawX = 0
+            self.rawY = 0
+            self.rawZ = 0
             self.X = 0.0
             self.Y = 0.0
             self.Z = 0.0
             return
-        # k10_box.acc返回的是mg单位，转换为g单位（除以1000）
-        self.X = self._acc.read_x() / 1000.0
-        self.Y = self._acc.read_y() / 1000.0
-        self.Z = self._acc.read_z() / 1000.0
+
+        # mg 原始整数
+        self.rawX = self._acc.read_x()
+        self.rawY = self._acc.read_y()
+        self.rawZ = self._acc.read_z()
+
+        # 转成 g 浮点
+        self.X = self.rawX
+        self.Y = self.rawY
+        self.Z = self.rawZ
     
     def x(self):
         return self.X
@@ -192,6 +224,12 @@ class K10BoxAccelAdapter(object):
     
     def shake(self):
         return self.shake_status
+
+    def strength(self):
+        x = self.X 
+        y = self.Y
+        z = self.Z
+        return math.sqrt(x*x + y*y + z*z)
 
 '''
 为了兼容上层API使用做的类
@@ -286,6 +324,12 @@ class accelerometer(object):
             return 0.0
         self.accel_sensor._measure()
         return self.accel_sensor.z()
+
+    def read_strength(self):
+        if self.accel_sensor is None:
+            return 0.0
+        self.accel_sensor._measure()
+        return self.accel_sensor.strength()
     
     def shake(self):
         if self.accel_sensor is None:

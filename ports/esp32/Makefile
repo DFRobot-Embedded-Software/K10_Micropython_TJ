@@ -39,6 +39,8 @@ BAUD_ARG := -b $(BAUD)
 endif
 DEVICE += $(PORT_ARG) $(BAUD_ARG)
 
+#DEVICE += --usb-jtag
+
 PYTHON ?= python3
  
 .PHONY: all clean deploy flash-firmware erase submodules  copy_modules FORCE 

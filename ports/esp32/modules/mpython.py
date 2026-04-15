@@ -1045,7 +1045,7 @@ class Scan_Rfid_Edu():
 class wifi:
     def __init__(self):
         self.sta = network.WLAN(network.STA_IF)
-        self.ap = network.WLAN(network.AP_IF)
+        #self.ap = network.WLAN(network.AP_IF)
 
     def connectWiFi(self, ssid, passwd, timeout=10):
         if self.sta.isconnected():

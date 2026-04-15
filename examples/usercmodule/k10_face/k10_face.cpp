@@ -638,38 +638,57 @@ extern "C" __attribute__((weak)) void move_detect_task(void* arg) {
     init_ai_data(&g_ai_data);
 
     camera_fb_t *frame = NULL;
-    camera_fb_t *frame_last = NULL;
+    uint16_t *prev_frame_buf = NULL;
+    size_t prev_frame_len = 0;
+    bool prev_frame_valid = false;
     
     while (1) {
         if (free_ai_flag == 1) {
             break;
         }
         
-        if(xQueueReceive(camera_queue, &frame, pdMS_TO_TICKS(100)) == pdPASS) {
-            
-            // 获取第二帧进行比较
-            if (xQueueReceive(camera_queue, &frame_last, portMAX_DELAY)) {
-            
-                    
-                    uint32_t moving_point_number = dl::image::get_moving_point_number((uint16_t *)frame->buf, (uint16_t *)frame_last->buf, frame->height, frame->width, 8, 15);
-                    if (moving_point_number > 10) {
-                        g_ai_data.move_flag = true;
-                    } else {
-                        g_ai_data.move_flag = false;
-                    }
-                    
-                    // 释放第一帧，推送第二帧
+        if (xQueueReceive(camera_queue, &frame, pdMS_TO_TICKS(100)) == pdPASS) {
+            if (!frame || !frame->buf || frame->len == 0) {
+                if (frame) {
                     esp_camera_fb_return(frame);
-                    camera_push_result(frame_last);
-                    ai_push_result(&g_ai_data);
-                    
-            } else {
-                esp_camera_fb_return(frame);
-                g_ai_data.move_flag = false;
-                ai_push_result(&g_ai_data);
+                }
+                continue;
             }
+
+            // 分配/调整上一帧缓存
+            if (prev_frame_buf == NULL || prev_frame_len != frame->len) {
+                if (prev_frame_buf) {
+                    free(prev_frame_buf);
+                    prev_frame_buf = NULL;
+                }
+                prev_frame_buf = (uint16_t *)malloc(frame->len);
+                prev_frame_len = frame->len;
+                prev_frame_valid = false;
+            }
+
+            if (prev_frame_buf && prev_frame_valid) {
+                uint32_t moving_point_number = dl::image::get_moving_point_number(
+                    prev_frame_buf, (uint16_t *)frame->buf, frame->height, frame->width, 8, 15);
+                // 适配低分辨率帧，降低触发阈值。
+                g_ai_data.move_flag = (moving_point_number > 3);
+            } else {
+                g_ai_data.move_flag = false;
+            }
+
+            if (prev_frame_buf) {
+                memcpy(prev_frame_buf, frame->buf, frame->len);
+                prev_frame_valid = true;
+            }
+
+            // 始终推送当前帧，保证预览连续。
+            camera_push_result(frame);
+            ai_push_result(&g_ai_data);
         }
         vTaskDelay(pdMS_TO_TICKS(1));
+    }
+    if (prev_frame_buf) {
+        free(prev_frame_buf);
+        prev_frame_buf = NULL;
     }
     free_camera_flag = 1;
     vTaskDelete(NULL);

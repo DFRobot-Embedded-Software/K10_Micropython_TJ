@@ -1589,35 +1589,26 @@ class Screen(object):
 
     def show_camera_img(self,buf):
         try:
-            # 快速检查，严格匹配 240x320 RGB565 帧
-            if buf is None or len(buf) != 240*320*2:
+            if buf is None:
                 return
 
-            # 持久化初始化：display_buf / img_dsc / img 只创建一次
-            if not hasattr(self, 'display_buf'):
-                self.display_buf = bytearray(240*320*2)
+            # 支持常见 RGB565 分辨率，按帧长自动识别
+            buflen = len(buf)
+            if buflen == 240 * 320 * 2:
+                w, h = 240, 320
+            elif buflen == 160 * 120 * 2:
+                w, h = 160, 120
+            elif buflen == 320 * 240 * 2:
+                w, h = 320, 240
+            else:
+                return
 
-            buflen = 240*320*2
+            # 持久化初始化：display_buf / img_dsc / img 只创建一次，尺寸变化时重建
+            if (not hasattr(self, 'display_buf')) or (len(self.display_buf) != buflen):
+                self.display_buf = bytearray(buflen)
 
             if not hasattr(self, 'img') or self.img is None:
                 self.img = lv.image(self.screen)
-                self.img.set_src(self.img_dsc)
-                try:
-                    self.img.align(lv.ALIGN.CENTER, 0, 0)
-                except:
-                    pass
-                try:
-                    lv.screen_load(self.screen)
-                except:
-                    pass
-                try:
-                    self.img.align(lv.ALIGN.CENTER, 0, 0)
-                except:
-                    pass
-                try:
-                    lv.screen_load(self.screen)
-                except:
-                    pass
 
             # 将输入帧拷贝到自有缓冲，避免依赖外部生命周期
             if isinstance(buf, (bytes, bytearray)):
@@ -1636,9 +1627,25 @@ class Screen(object):
             except:
                 pass
 
-            # 更新同一个 img_dsc 的数据并刷新
-            self.img_dsc.data = bytes(self.display_buf)
+            # 分辨率变化时重建描述符；否则仅更新数据
+            if (not hasattr(self, 'img_dsc')) or (not hasattr(self, '_img_wh')) or (self._img_wh != (w, h)):
+                self.img_dsc = lv.image_dsc_t(
+                    dict(
+                        header=dict(cf=lv.COLOR_FORMAT.RGB565, w=w, h=h),
+                        data_size=buflen,
+                        data=bytes(self.display_buf),
+                    )
+                )
+                self._img_wh = (w, h)
+            else:
+                self.img_dsc.data = bytes(self.display_buf)
+                self.img_dsc.data_size = buflen
+
             self.img.set_src(self.img_dsc)
+            try:
+                self.img.align(lv.ALIGN.CENTER, 0, 0)
+            except:
+                pass
             # 确保首次已加载并可见
             try:
                 lv.screen_load(self.screen)
@@ -1753,9 +1760,10 @@ class Screen(object):
 class Wifibase(object):
     def __init__(self):
         self.sta = network.WLAN(network.STA_IF)
-        self.ap = network.WLAN(network.AP_IF)
+        #self.ap = network.WLAN(network.AP_IF)
 
     def connectWiFi(self, ssid, passwd, timeout=10):
+        """先连 WiFi 再启动 ai：init_ai/camera_start/code_scanner。启动摄像头前建议 gc.collect() 以免 Camera init 0xffffffff。"""
         if self.sta.isconnected():
             self.sta.disconnect()
         self.sta.active(True)
@@ -1928,21 +1936,26 @@ class MqttClient():
     def subscribe(self, topic, callback):
         self.lock = True
         try:
+            # 始终用 str 作为字典 key，用 UTF-8 bytes 做 hex 计算，兼容中文
             topic = str(topic)
+            topic_bytes = self._safe_encode_utf8(topic)
+            topic_hex = ubinascii.hexlify(topic_bytes).decode()
+            var_name = 'mqtt_topic_' + topic_hex
             global _callback
             if(not topic in self.topic_msg_dict):
                 _callback = callback
                 self.topic_msg_dict[topic] = None
                 self.topic_callback[topic] = True
-                exec('global mqtt_topic_' + bytes.decode(ubinascii.hexlify(topic)),globals())
-                exec('mqtt_topic_' + bytes.decode(ubinascii.hexlify(topic)) + ' = _callback',globals())
+                # 为每个主题创建唯一的回调变量名（支持中文主题）
+                exec('global ' + var_name, globals())
+                globals()[var_name] = _callback
                 self.client.subscribe(topic)
                 time.sleep(0.1)
             elif(topic in self.topic_msg_dict and self.topic_callback[topic] == False):
                 _callback = callback
                 self.topic_callback[topic] = True
-                exec('global mqtt_topic_' + bytes.decode(ubinascii.hexlify(topic)),globals())
-                exec('mqtt_topic_' + bytes.decode(ubinascii.hexlify(topic)) + ' = _callback',globals())
+                exec('global ' + var_name, globals())
+                globals()[var_name] = _callback
                 time.sleep(0.1)
             else:
                 print('Already subscribed to the topic:{}'.format(topic))
@@ -1953,15 +1966,20 @@ class MqttClient():
     def on_message(self, topic, msg):
         try:
             gc.collect()
-            topic = self._safe_decode_utf8(topic)
-            msg = self._safe_decode_utf8(msg)
+            # 将主题和消息安全地解码为 UTF-8 字符串（支持中文）
+            topic_str = self._safe_decode_utf8(topic)
+            msg_str = self._safe_decode_utf8(msg)
 
-            #print("Received '{payload}' from topic '{topic}'\n".format(payload = msg, topic = topic))
-            if(topic in self.topic_msg_dict):
-                self.topic_msg_dict[topic] = msg
-                if(self.topic_callback[topic]):
-                    exec('global mqtt_topic_' + bytes.decode(ubinascii.hexlify(topic)),globals())
-                    eval('mqtt_topic_' + bytes.decode(ubinascii.hexlify(topic))+'()',globals())
+            if(topic_str in self.topic_msg_dict):
+                self.topic_msg_dict[topic_str] = msg_str
+                if(self.topic_callback[topic_str]):
+                    # 使用 UTF-8 bytes 生成十六进制主题 key，避免中文导致 hexlify 出错
+                    topic_bytes = self._safe_encode_utf8(topic_str)
+                    topic_hex = ubinascii.hexlify(topic_bytes).decode()
+                    var_name = 'mqtt_topic_' + topic_hex
+                    cb = globals().get(var_name, None)
+                    if callable(cb):
+                        cb()
         except Exception as e:
             print('MQTT on_message error:'+str(e))
     

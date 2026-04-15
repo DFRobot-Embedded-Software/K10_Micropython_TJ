@@ -28,12 +28,14 @@
 #include "py/mphal.h"
 #include "usb.h"
 
+#if MICROPY_HW_ENABLE_USBDEV
+#include "esp_mac.h"
+#include "shared/tinyusb/mp_usbd.h"
+#endif
+
 #if MICROPY_HW_USB_CDC
 #include "esp_rom_gpio.h"
-#include "esp_mac.h"
 #include "esp_private/usb_phy.h"
-
-#include "shared/tinyusb/mp_usbd.h"
 
 static usb_phy_handle_t phy_hdl;
 
@@ -69,6 +71,9 @@ void usb_usj_mode(void) {
 }
 #endif
 
+#endif // MICROPY_HW_USB_CDC
+
+#if MICROPY_HW_ENABLE_USBDEV
 void mp_usbd_port_get_serial_number(char *serial_buf) {
     // use factory default MAC as serial ID
     uint8_t mac[8];
@@ -76,5 +81,4 @@ void mp_usbd_port_get_serial_number(char *serial_buf) {
     MP_STATIC_ASSERT(sizeof(mac) * 2 <= MICROPY_HW_USB_DESC_STR_MAX);
     mp_usbd_hex_str(serial_buf, mac, sizeof(mac));
 }
-
-#endif // MICROPY_HW_USB_CDC
+#endif

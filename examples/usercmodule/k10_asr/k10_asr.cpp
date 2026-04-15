@@ -66,6 +66,17 @@ srmodel_list_t *models = NULL;
 
 static int wakeup_flag = 0;
 
+static void k10_asr_set_quiet_log_level(void) {
+    // Reduce noisy runtime logs from speech libraries.
+    esp_log_level_set("AUDIO_PROCESS", ESP_LOG_ERROR);
+    esp_log_level_set("ESP_SR", ESP_LOG_ERROR);
+    esp_log_level_set("MULTINET", ESP_LOG_ERROR);
+    esp_log_level_set("WAKENET", ESP_LOG_ERROR);
+    esp_log_level_set("model_path", ESP_LOG_ERROR);
+    esp_log_level_set("esp_tts", ESP_LOG_ERROR);
+    esp_log_level_set("TTS", ESP_LOG_ERROR);
+}
+
 
 // ES7243E配置表定义
 reg_cfg_t es7243e_stop_table[] = {
@@ -254,21 +265,42 @@ void detect_Task(void *arg)
 {
     esp_afe_sr_data_t *afe_data = (esp_afe_sr_data_t*)arg;
     int afe_chunksize = afe_handle->get_fetch_chunksize(afe_data);
-    char *mn_name = esp_srmodel_filter(models, ESP_MN_PREFIX, ESP_MN_CHINESE);
-    esp_mn_iface_t *multinet = esp_mn_handle_from_name(mn_name);
-    model_iface_data_t *model_data = multinet->create(mn_name, wake_time);
-    esp_mn_commands_alloc(multinet,model_data);
+    // Prefer English model, fallback to Chinese to avoid exiting detect task.
+    char *mn_name = esp_srmodel_filter(models, ESP_MN_PREFIX, ESP_MN_ENGLISH);
+    if (mn_name == NULL) {
+        mn_name = esp_srmodel_filter(models, ESP_MN_PREFIX, ESP_MN_CHINESE);
+    }
+
+    esp_mn_iface_t *multinet = NULL;
+    model_iface_data_t *model_data = NULL;
+    if (mn_name != NULL) {
+        multinet = esp_mn_handle_from_name(mn_name);
+        if (multinet != NULL) {
+            model_data = multinet->create(mn_name, wake_time);
+            if (model_data != NULL) {
+                esp_mn_commands_alloc(multinet, model_data);
+            } else {
+                ESP_LOGE("k10_asr", "multinet->create failed for %s", mn_name);
+            }
+        } else {
+            ESP_LOGE("k10_asr", "esp_mn_handle_from_name failed for %s", mn_name);
+        }
+    } else {
+        ESP_LOGW("k10_asr", "no MN model found, wake word will work but command detection is disabled");
+    }
     
     while (1) {
         if (free_task == 1) {
             break;
         }
-        afe_fetch_result_t* res = afe_handle->fetch(afe_data); 
+        afe_fetch_result_t *res = afe_handle->fetch(afe_data);
         if (!res || res->ret_value == ESP_FAIL) {
             xl9555_write(0x03, 0x80);
+            vTaskDelay(pdMS_TO_TICKS(1));
+            continue;
         }
 
-        if (res->wakeup_state == WAKENET_DETECTED) {
+        if (res->wakeup_state == WAKENET_DETECTED && multinet != NULL && model_data != NULL) {
 	        multinet->clean(model_data);
         }
 
@@ -281,6 +313,11 @@ void detect_Task(void *arg)
         }
 
         if (wakeup_flag == 1) {
+            if (multinet == NULL || model_data == NULL) {
+                // Keep wake-word response alive even when command model is unavailable.
+                vTaskDelay(pdMS_TO_TICKS(1));
+                continue;
+            }
             esp_mn_state_t mn_state = multinet->detect(model_data, res->data);
 
             if (mn_state == ESP_MN_STATE_DETECTING) {
@@ -357,6 +394,7 @@ extern "C" __attribute__((weak)) void init_asr(int time, int flag) {
 
 // 音频采集任务
 extern "C" __attribute__((weak)) void create_asr(void) {
+    k10_asr_set_quiet_log_level();
 
     models = esp_srmodel_init("model");
     afe_config_t *afe_config = afe_config_init("MN", models, AFE_TYPE_SR, AFE_MODE_LOW_COST);
@@ -458,6 +496,7 @@ void tts_Task(void *arg)
 }
 
 extern "C" __attribute__((weak)) void start_tts(void){
+    k10_asr_set_quiet_log_level();
     // 1. 初始化TTS
     const esp_partition_t* part=esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "voice_data");
     void* voicedata;
