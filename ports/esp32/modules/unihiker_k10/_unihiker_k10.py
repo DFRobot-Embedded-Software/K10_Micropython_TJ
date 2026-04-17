@@ -3,11 +3,11 @@ from k10_base import Light,Mic,Speaker,TF_card,Screen,Camera,WiFi,MqttClient,Tim
 from k10_base import k10_i2c, pins_remap_k10
 from neopixel import NeoPixel
 from machine import Servo,I2C
-import machine,onewire, struct,gc
+import machine,onewire, struct,gc,math
 from ds18x20 import DS18X20
 from hcsr04 import HCSR04
 from dht import DHT11, DHT22
-gc.collect()    
+gc.collect()  
 
 '''
 六轴的驱动类
@@ -31,6 +31,8 @@ class Accelerometer(object):
         self.Z = 0.0
         self._begin()
         self._measure()
+        self.ssvtA = 1 << 12
+        self.available = True
 
     def _begin(self):
         buf = self._read_bytes(0x24, 1)
@@ -95,25 +97,38 @@ class Accelerometer(object):
         return rslt
     def _writeReg(self, reg, value):
         self._i2c.writeto_mem(self._addr, reg, value.to_bytes(1, 'little'))
+
     def _measure(self):
         tempbuf = self._read_bytes(0x27,1)
         if (tempbuf[0] & 0x0F) == 0x0F:
             accbuf = self._read_bytes(0xA8, 6)
-            self.X = (accbuf[1]<<8 | accbuf[0]) >> 4
-            self.Y = (accbuf[3]<<8 | accbuf[2]) >> 4
-            self.Z = (accbuf[5]<<8 | accbuf[4]) >> 4
-            if (self.X & 0x800) == 0x800:
-                self.X -= 4096
-            if (self.Y & 0x800) == 0x800:
-                self.Y -= 4096
-            if (self.Z & 0x800) == 0x800:
-                self.Z -= 4096
-            self.X = self.X / 1024.0
-            self.Y = self.Y / 1024.0
-            self.Z = self.Z / 1024.0
+    
+            # 原始加速度 raw 12-bit（整数）
+            rawX = (accbuf[1] << 8 | accbuf[0]) >> 4
+            rawY = (accbuf[3] << 8 | accbuf[2]) >> 4
+            rawZ = (accbuf[5] << 8 | accbuf[4]) >> 4
+    
+            # 补码处理，保持整数
+            if (rawX & 0x800):
+                rawX -= 4096
+            if (rawY & 0x800):
+                rawY -= 4096
+            if (rawZ & 0x800):
+                rawZ -= 4096
+    
+            # 保存原始整数值（位运算用）
+            self.rawX = rawX
+            self.rawY = rawY
+            self.rawZ = rawZ
+    
+            # g 单位浮点（显示用）
+            self.X = rawX
+            self.Y = rawY
+            self.Z = rawZ
+    
+        # 手势部分保持不变
         tempbuf = self._read_bytes(0x35,1)
-
-        if(tempbuf[0] & 0x60) == 0x60:
+        if   (tempbuf[0] & 0x60) == 0x60:
             self._gesture = self.SCREEN_DOWN
         elif (tempbuf[0] & 0x50) == 0x50:
             self._gesture = self.SCREEN_UP
@@ -127,7 +142,7 @@ class Accelerometer(object):
             self._gesture = self.TILT_BACK
         elif (tempbuf[0] != 0):
             self._gesture = self.SHANK
-       
+    
 
     def x(self):
         #self.X = _accelerometer.get_x()
@@ -140,9 +155,15 @@ class Accelerometer(object):
     def z(self):
         #self.Z = _accelerometer.get_z()
         return self.Z
+    
+    def gesture(self):
+        return self._gesture
 
-    def shake(self):
-        return self.shake_status
+    def strength(self):
+        x = self.X 
+        y = self.Y
+        z = self.Z
+        return math.sqrt(x*x + y*y + z*z)
 
 '''
 K10box加速度计适配器类，使k10_box.acc接口与Accelerometer兼容
@@ -167,19 +188,30 @@ class K10BoxAccelAdapter(object):
             self.X = 0.0
             self.Y = 0.0
             self.Z = 0.0
+            self.ssvtA = 1 << 12
+            self.available = True
         except Exception:
             self._acc = None
     
     def _measure(self):
         if self._acc is None or not self._acc.available:
+            self.rawX = 0
+            self.rawY = 0
+            self.rawZ = 0
             self.X = 0.0
             self.Y = 0.0
             self.Z = 0.0
             return
-        # k10_box.acc返回的是mg单位，转换为g单位（除以1000）
-        self.X = self._acc.read_x() / 1000.0
-        self.Y = self._acc.read_y() / 1000.0
-        self.Z = self._acc.read_z() / 1000.0
+
+        # mg 原始整数
+        self.rawX = self._acc.read_x()
+        self.rawY = self._acc.read_y()
+        self.rawZ = self._acc.read_z()
+
+        # 转成 g 浮点
+        self.X = self.rawX
+        self.Y = self.rawY
+        self.Z = self.rawZ
     
     def x(self):
         return self.X
@@ -192,6 +224,12 @@ class K10BoxAccelAdapter(object):
     
     def shake(self):
         return self.shake_status
+
+    def strength(self):
+        x = self.X 
+        y = self.Y
+        z = self.Z
+        return math.sqrt(x*x + y*y + z*z)
 
 '''
 为了兼容上层API使用做的类
@@ -286,6 +324,12 @@ class accelerometer(object):
             return 0.0
         self.accel_sensor._measure()
         return self.accel_sensor.z()
+
+    def read_strength(self):
+        if self.accel_sensor is None:
+            return 0.0
+        self.accel_sensor._measure()
+        return self.accel_sensor.strength()
     
     def shake(self):
         if self.accel_sensor is None:
@@ -740,51 +784,126 @@ class ultrasonic(HCSR04):
 外置DHT11/DHT22温湿度传感器驱动类
 '''
 class dht(object):
-    def __init__(self, pin, sensor_type='DHT11'):
+    def __init__(self, pin, sensor_type='AUTO'):
         """初始化DHT传感器
-        
+
         Args:
             pin: 传感器连接的引脚
-            sensor_type: 传感器类型，'DHT11' 或 'DHT22'
+            sensor_type: 'AUTO' / 'DHT11' / 'DHT22'
         """
         self._pin = pins_remap_k10[pin]
         self._sensor_type = sensor_type.upper()
-        
-        if self._sensor_type == 'DHT11':
-            self._dht = DHT11(Pin(self._pin))
-        elif self._sensor_type == 'DHT22':
-            self._dht = DHT22(Pin(self._pin))
+        if self._sensor_type not in ('AUTO', 'DHT11', 'DHT22'):
+            raise ValueError("sensor_type must be 'AUTO', 'DHT11' or 'DHT22'")
+
+        if self._sensor_type == 'AUTO':
+            # AUTO 模式优先探测 DHT22，失败再回退 DHT11。
+            self._sensor_candidates = ['DHT22', 'DHT11']
+        elif self._sensor_type == 'DHT11':
+            self._sensor_candidates = ['DHT11', 'DHT22']
         else:
-            raise ValueError("sensor_type must be 'DHT11' or 'DHT22'")
-            
-        self._dht.measure()
-        
-    def read(self, max_retries=3, retry_delay=0.1):
-        """读取温湿度数据，带重试机制
-        
-        Args:
-            max_retries: 最大重试次数，默认3次
-            retry_delay: 重试间隔时间（秒），默认0.1秒
-            
-        Returns:
-            tuple: (温度, 湿度)
-        """
+            self._sensor_candidates = ['DHT22', 'DHT11']
+
+        self._active_index = 0
+        self._active_type = self._sensor_candidates[self._active_index]
+        self._dht = self._create_sensor(self._active_type)
+        self._last_measure_ts = 0.0
+        self._auto_locked = (self._sensor_type != 'AUTO')
+        if self._sensor_type == 'AUTO':
+            self._auto_probe_sensor()
+
+    def _create_sensor(self, sensor_type):
+        pin_obj = Pin(self._pin)
+        if sensor_type == 'DHT11':
+            return DHT11(pin_obj)
+        return DHT22(pin_obj)
+
+    def _switch_sensor(self):
+        self._active_index = (self._active_index + 1) % len(self._sensor_candidates)
+        self._active_type = self._sensor_candidates[self._active_index]
+        self._dht = self._create_sensor(self._active_type)
+        # 切换型号后重置节流计时，避免沿用上一型号的时间窗。
+        self._last_measure_ts = 0.0
+
+    def _auto_probe_sensor(self):
+        """启动时探测传感器型号，成功后锁定。"""
         import time
-        
+        # DHT22 在上电后通常需要更长稳定时间，避免首次误判为 DHT11。
+        time.sleep(2.2)
+        for idx, sensor_type in enumerate(self._sensor_candidates):
+            self._active_index = idx
+            self._active_type = sensor_type
+            self._dht = self._create_sensor(sensor_type)
+            self._last_measure_ts = 0.0
+            min_interval = 2.1 if sensor_type == 'DHT22' else 1.1
+            # 每个型号尝试三次，并严格满足该型号的最小采样间隔。
+            for _ in range(3):
+                try:
+                    temp, hum = self._measure_with_interval(0)
+                    if not self._validate_reading(temp, hum):
+                        raise OSError(116)
+                    self._auto_locked = True
+                    return
+                except OSError:
+                    time.sleep(min_interval)
+                    continue
+        # 探测失败则保持未锁定，后续 read() 继续自动切换重试。
+        self._auto_locked = False
+
+    def _measure_with_interval(self, retry_delay):
+        import time
+        min_interval = 2.0 if self._active_type == 'DHT22' else 1.0
+        now = time.time()
+        wait_s = min_interval - (now - self._last_measure_ts)
+        if wait_s > 0:
+            time.sleep(wait_s)
+        if retry_delay > 0:
+            time.sleep(retry_delay)
+        self._dht.measure()
+        self._last_measure_ts = time.time()
+        temp = self._dht.temperature()
+        hum = self._dht.humidity()
+        if hum is None or temp is None:
+            raise OSError(116)
+        return temp, hum
+
+    def _validate_reading(self, temp, hum):
+        """校验读数是否在合理范围内，过滤错误型号解析造成的异常值。"""
+        if hum < 0 or hum > 100:
+            return False
+        if temp < -40 or temp > 85:
+            return False
+        # DHT11 为整数分辨率，AUTO 探测阶段遇到小数值通常表示型号不匹配。
+        if self._active_type == 'DHT11' and self._sensor_type == 'AUTO':
+            if temp != int(temp) or hum != int(hum):
+                return False
+        return True
+
+    def read(self, max_retries=8, retry_delay=0.5):
+        """读取温湿度数据，带重试和自动传感器类型切换。"""
+        last_error = None
         for attempt in range(max_retries):
             try:
-                self._dht.measure()
-                return self._dht.temperature(), self._dht.humidity()
+                temp, hum = self._measure_with_interval(retry_delay)
+                if self._sensor_type == 'AUTO' and not self._validate_reading(temp, hum):
+                    raise OSError(116)
+                # AUTO 模式首次成功后锁定传感器类型，避免每次失败时来回切换。
+                if self._sensor_type == 'AUTO':
+                    self._auto_locked = True
+                return temp, hum
             except OSError as e:
+                last_error = e
+                # 超时或读取失败时，自动尝试另一种型号（AUTO 且尚未锁定时）
+                if (not self._auto_locked) and len(self._sensor_candidates) > 1 and (attempt % 2 == 0):
+                    self._switch_sensor()
                 if attempt < max_retries - 1:
-                    time.sleep(retry_delay)
                     continue
-                else:
-                    raise e
-                    
+
+        raise last_error
+
     def get_sensor_type(self):
-        """获取传感器类型"""
-        return self._sensor_type
+        """返回当前生效的传感器类型。"""
+        return self._active_type
 
 light = Light()
 

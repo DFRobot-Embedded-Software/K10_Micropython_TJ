@@ -12,6 +12,29 @@ import uasyncio as asyncio
 gc.collect()
 import struct
 
+_k10_lv_fs_registered = False
+
+def _k10_ensure_lv_fs():
+    global _k10_lv_fs_registered
+    if _k10_lv_fs_registered:
+        return
+    try:
+        fs_drv = lv.fs_drv_t()
+        fs_driver.fs_register(fs_drv, 'S')
+    except Exception:
+        pass
+    _k10_lv_fs_registered = True
+
+def _k10_to_lv_path(path):
+    if not path:
+        return None
+    p = str(path)
+    if p.startswith("S:"):
+        return p
+    if p.startswith("/"):
+        return "S:" + p
+    return "S:/" + p
+
 '''
 K10的引脚操作类
 K10分为原生esp32S3的引脚和IO扩展芯片的引脚
@@ -1572,6 +1595,54 @@ class Screen(object):
         area.set_height(h)
         lv.draw_rect(self.layer, self.desc, area)
         pass
+
+    def draw_sys_img(self, image="/q.bmp", x=0, y=0, debug=False):
+        """显示文件系统中的图片到屏幕指定坐标，成功返回 True，失败返回 False。"""
+        try:
+            if not hasattr(self, 'screen') or self.screen is None:
+                if debug:
+                    print("draw_sys_img: screen not initialized")
+                return False
+
+            raw_path = str(image)
+            lv_path = _k10_to_lv_path(raw_path)
+            if lv_path is None:
+                if debug:
+                    print("draw_sys_img: invalid path")
+                return False
+
+            _k10_ensure_lv_fs()
+            if not hasattr(self, '_sys_img') or self._sys_img is None:
+                self._sys_img = lv.image(self.screen)
+            last_src = getattr(self, '_sys_img_src', None)
+            need_reload = (last_src != lv_path)
+
+            if need_reload:
+                # 首次加载优先直接解码，失败时再做一次 GC 后重试，减少首帧阻塞。
+                try:
+                    self._sys_img.set_src(lv_path)
+                except Exception as e:
+                    gc.collect()
+                    try:
+                        self._sys_img.set_src(lv_path)
+                    except Exception as e2:
+                        if debug:
+                            print("draw_sys_img: set_src failed:", e, e2)
+                        return False
+                self._sys_img_src = lv_path
+
+            self._sys_img.set_pos(int(x), int(y))
+            try:
+                self._sys_img.move_foreground()
+            except Exception:
+                pass
+            self._sys_img.invalidate()
+            return True
+        except Exception as e:
+            if debug:
+                print("draw_sys_img: set_src failed:", e)
+            return False
+
     def show_camera_feed(self, buf):
         # 将摄像头数据填充到canvas缓冲区
         #self.canvas_buf[:] = buf[:len(self.canvas_buf)]  # 假设buf与canvas分辨率匹配
@@ -1753,7 +1824,7 @@ class Screen(object):
 class Wifibase(object):
     def __init__(self):
         self.sta = network.WLAN(network.STA_IF)
-        self.ap = network.WLAN(network.AP_IF)
+        #self.ap = network.WLAN(network.AP_IF)
 
     def connectWiFi(self, ssid, passwd, timeout=10):
         if self.sta.isconnected():
@@ -1928,21 +1999,26 @@ class MqttClient():
     def subscribe(self, topic, callback):
         self.lock = True
         try:
+            # 始终用 str 作为字典 key，用 UTF-8 bytes 做 hex 计算，兼容中文
             topic = str(topic)
+            topic_bytes = self._safe_encode_utf8(topic)
+            topic_hex = ubinascii.hexlify(topic_bytes).decode()
+            var_name = 'mqtt_topic_' + topic_hex
             global _callback
             if(not topic in self.topic_msg_dict):
                 _callback = callback
                 self.topic_msg_dict[topic] = None
                 self.topic_callback[topic] = True
-                exec('global mqtt_topic_' + bytes.decode(ubinascii.hexlify(topic)),globals())
-                exec('mqtt_topic_' + bytes.decode(ubinascii.hexlify(topic)) + ' = _callback',globals())
+                # 为每个主题创建唯一的回调变量名（支持中文主题）
+                exec('global ' + var_name, globals())
+                globals()[var_name] = _callback
                 self.client.subscribe(topic)
                 time.sleep(0.1)
             elif(topic in self.topic_msg_dict and self.topic_callback[topic] == False):
                 _callback = callback
                 self.topic_callback[topic] = True
-                exec('global mqtt_topic_' + bytes.decode(ubinascii.hexlify(topic)),globals())
-                exec('mqtt_topic_' + bytes.decode(ubinascii.hexlify(topic)) + ' = _callback',globals())
+                exec('global ' + var_name, globals())
+                globals()[var_name] = _callback
                 time.sleep(0.1)
             else:
                 print('Already subscribed to the topic:{}'.format(topic))
@@ -1953,15 +2029,20 @@ class MqttClient():
     def on_message(self, topic, msg):
         try:
             gc.collect()
-            topic = self._safe_decode_utf8(topic)
-            msg = self._safe_decode_utf8(msg)
+            # 将主题和消息安全地解码为 UTF-8 字符串（支持中文）
+            topic_str = self._safe_decode_utf8(topic)
+            msg_str = self._safe_decode_utf8(msg)
 
-            #print("Received '{payload}' from topic '{topic}'\n".format(payload = msg, topic = topic))
-            if(topic in self.topic_msg_dict):
-                self.topic_msg_dict[topic] = msg
-                if(self.topic_callback[topic]):
-                    exec('global mqtt_topic_' + bytes.decode(ubinascii.hexlify(topic)),globals())
-                    eval('mqtt_topic_' + bytes.decode(ubinascii.hexlify(topic))+'()',globals())
+            if(topic_str in self.topic_msg_dict):
+                self.topic_msg_dict[topic_str] = msg_str
+                if(self.topic_callback[topic_str]):
+                    # 使用 UTF-8 bytes 生成十六进制主题 key，避免中文导致 hexlify 出错
+                    topic_bytes = self._safe_encode_utf8(topic_str)
+                    topic_hex = ubinascii.hexlify(topic_bytes).decode()
+                    var_name = 'mqtt_topic_' + topic_hex
+                    cb = globals().get(var_name, None)
+                    if callable(cb):
+                        cb()
         except Exception as e:
             print('MQTT on_message error:'+str(e))
     
