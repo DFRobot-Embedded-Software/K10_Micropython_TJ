@@ -1899,6 +1899,7 @@ class MqttClient():
         self.passsword = None
         self.topic_msg_dict = {}
         self.topic_callback = {}
+        self.topic_handlers = {}
         self.tim_count = 0
         self._connected = False
         self.lock = False
@@ -1999,32 +2000,23 @@ class MqttClient():
     def subscribe(self, topic, callback):
         self.lock = True
         try:
-            # 始终用 str 作为字典 key，用 UTF-8 bytes 做 hex 计算，兼容中文
             topic = str(topic)
-            topic_bytes = self._safe_encode_utf8(topic)
-            topic_hex = ubinascii.hexlify(topic_bytes).decode()
-            var_name = 'mqtt_topic_' + topic_hex
-            global _callback
             if(not topic in self.topic_msg_dict):
-                _callback = callback
                 self.topic_msg_dict[topic] = None
                 self.topic_callback[topic] = True
-                # 为每个主题创建唯一的回调变量名（支持中文主题）
-                exec('global ' + var_name, globals())
-                globals()[var_name] = _callback
+                self.topic_handlers[topic] = callback
                 self.client.subscribe(topic)
                 time.sleep(0.1)
             elif(topic in self.topic_msg_dict and self.topic_callback[topic] == False):
-                _callback = callback
                 self.topic_callback[topic] = True
-                exec('global ' + var_name, globals())
-                globals()[var_name] = _callback
+                self.topic_handlers[topic] = callback
                 time.sleep(0.1)
             else:
                 print('Already subscribed to the topic:{}'.format(topic))
-            self.lock = False
         except Exception as e:
             print('MQTT subscribe error:'+str(e))
+        finally:
+            self.lock = False
 
     def on_message(self, topic, msg):
         try:
@@ -2036,13 +2028,14 @@ class MqttClient():
             if(topic_str in self.topic_msg_dict):
                 self.topic_msg_dict[topic_str] = msg_str
                 if(self.topic_callback[topic_str]):
-                    # 使用 UTF-8 bytes 生成十六进制主题 key，避免中文导致 hexlify 出错
-                    topic_bytes = self._safe_encode_utf8(topic_str)
-                    topic_hex = ubinascii.hexlify(topic_bytes).decode()
-                    var_name = 'mqtt_topic_' + topic_hex
-                    cb = globals().get(var_name, None)
+                    cb = self.topic_handlers.get(topic_str, None)
                     if callable(cb):
-                        cb()
+                        try:
+                            # 新回调风格：callback(_message)
+                            cb(msg_str)
+                        except TypeError:
+                            # 兼容旧回调风格：callback()
+                            cb()
         except Exception as e:
             print('MQTT on_message error:'+str(e))
     

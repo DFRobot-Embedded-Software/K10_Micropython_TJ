@@ -884,7 +884,9 @@ class dht(object):
         last_error = None
         for attempt in range(max_retries):
             try:
-                temp, hum = self._measure_with_interval(retry_delay)
+                # 仅在重试时等待 retry_delay，避免每次成功读数都多睡一轮
+                delay = retry_delay if attempt else 0
+                temp, hum = self._measure_with_interval(delay)
                 if self._sensor_type == 'AUTO' and not self._validate_reading(temp, hum):
                     raise OSError(116)
                 # AUTO 模式首次成功后锁定传感器类型，避免每次失败时来回切换。
