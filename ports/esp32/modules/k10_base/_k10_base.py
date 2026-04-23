@@ -2005,7 +2005,7 @@ class MqttClient():
                 self.topic_msg_dict[topic] = None
                 self.topic_callback[topic] = True
                 self.topic_handlers[topic] = callback
-                self.client.subscribe(topic)
+                self.client.subscribe(self._safe_encode_utf8(topic))
                 time.sleep(0.1)
             elif(topic in self.topic_msg_dict and self.topic_callback[topic] == False):
                 self.topic_callback[topic] = True
