@@ -1412,9 +1412,17 @@ class Screen(object):
         self.display_bus = Ili9341(spi= self.spi_bus, cs=14, dc=13,rot=dir)
         self.linewidth = 1
         self._camera_running = False
+        # Thonny 多次 Run 时模块缓存，screen 单例复用；重复 init 会重复创建 LVGL/canvas 导致崩溃
+        self._screen_init_done = False
         
     #初始化屏幕，设置方向为(0~3)
     def init(self,dir=2):
+        if getattr(self, "_screen_init_done", False):
+            try:
+                self.display_bus.apply_rotation(dir)
+            except Exception:
+                pass
+            return
         #用来打开屏幕背光
         myi2c = I2C(0, scl=Pin(48), sda=Pin(47), freq=100000)
 
@@ -1463,6 +1471,7 @@ class Screen(object):
         self.camera_timer = None
         # 记录当前图片宽高
         self._img_wh = (240, 320)
+        self._screen_init_done = True
 
     #显示指定颜色背景
     def show_bg(self,color=0xFFFFFF):
@@ -1612,35 +1621,87 @@ class Screen(object):
                 return False
 
             _k10_ensure_lv_fs()
-            if not hasattr(self, '_sys_img') or self._sys_img is None:
-                self._sys_img = lv.image(self.screen)
-            last_src = getattr(self, '_sys_img_src', None)
-            need_reload = (last_src != lv_path)
+            img_x = int(x)
+            img_y = int(y)
+            key = (lv_path, img_x, img_y)
 
-            if need_reload:
+            # 支持同一图片在不同坐标重复显示：每个(src, x, y)一个独立image对象
+            if not hasattr(self, '_sys_img_items') or self._sys_img_items is None:
+                self._sys_img_items = {}
+
+            img_obj = self._sys_img_items.get(key, None)
+            if img_obj is None:
+                img_obj = lv.image(self.screen)
                 # 首次加载优先直接解码，失败时再做一次 GC 后重试，减少首帧阻塞。
                 try:
-                    self._sys_img.set_src(lv_path)
+                    img_obj.set_src(lv_path)
                 except Exception as e:
                     gc.collect()
                     try:
-                        self._sys_img.set_src(lv_path)
+                        img_obj.set_src(lv_path)
                     except Exception as e2:
                         if debug:
                             print("draw_sys_img: set_src failed:", e, e2)
                         return False
-                self._sys_img_src = lv_path
+                self._sys_img_items[key] = img_obj
 
-            self._sys_img.set_pos(int(x), int(y))
+            img_obj.set_pos(img_x, img_y)
             try:
-                self._sys_img.move_foreground()
+                img_obj.move_foreground()
             except Exception:
                 pass
-            self._sys_img.invalidate()
+            img_obj.invalidate()
             return True
         except Exception as e:
             if debug:
                 print("draw_sys_img: set_src failed:", e)
+            return False
+
+        """将文件系统图片绘制到240x320画布（不创建多个lv.image对象）。"""
+        try:
+            if not hasattr(self, 'canvas') or self.canvas is None:
+                if debug:
+                    print("draw_sys_img_canvas: canvas not initialized")
+                return False
+
+            raw_path = str(image)
+            lv_path = _k10_to_lv_path(raw_path)
+            if lv_path is None:
+                if debug:
+                    print("draw_sys_img_canvas: invalid path")
+                return False
+
+            _k10_ensure_lv_fs()
+            # 明确使用 240x320 画布
+            self.canvas.set_size(240, 320)
+            if not hasattr(self, 'canvas_buf') or self.canvas_buf is None or len(self.canvas_buf) != 240 * 320 * 4:
+                self.canvas_buf = bytearray(240 * 320 * 4)
+            self.canvas.set_buffer(self.canvas_buf, 240, 320, lv.COLOR_FORMAT.ARGB8888)
+
+            draw_dsc = lv.draw_image_dsc_t()
+            draw_dsc.init()
+            draw_dsc.src = lv_path
+
+            img_x = int(x)
+            img_y = int(y)
+            if img_x >= 240 or img_y >= 320:
+                if debug:
+                    print("draw_sys_img_canvas: out of canvas", img_x, img_y)
+                return False
+
+            # 该绑定中无法稳定读取文件图片宽高，直接在240x320画布内按坐标绘制并裁剪。
+            coords = lv.area_t(dict(
+                x1=img_x,
+                y1=img_y,
+                x2=239,
+                y2=319
+            ))
+            lv.draw_image(self.layer, draw_dsc, coords)
+
+            return True
+        except Exception as e:
+            if debug:
+                print("draw_sys_img_canvas failed:", e)
             return False
 
     def show_camera_feed(self, buf):
@@ -1770,8 +1831,12 @@ class Screen(object):
             # 静默处理所有异常，避免影响主程序
             return False
 
-    def deinit(self):
-        """清理Screen对象的所有资源"""
+    def deinit(self, full=False, backlight_off=False):
+        """清理Screen资源。
+        full=False: 安全释放（推荐在 Ctrl+C/重复 Run 场景），不销毁 LVGL 核心。
+        full=True: 彻底释放（含 display_bus/lv），仅在确认不会立即再次使用屏幕时调用。
+        backlight_off=False: 默认不改背光电源位，避免部分板卡在下次 Run 时掉线。
+        """
         print("Screen deinit...")
         try:
             # 1. 停止摄像头显示
@@ -1779,46 +1844,54 @@ class Screen(object):
                 self.stop_camera()
             except:
                 pass
-            # 2. 清理LVGL对象
+            # 非 full 模式下只做“软回收”：不销毁 LV 对象，不释放总线，
+            # 以保证 Thonny Ctrl+C 后再次 Run 的稳定性。
+            if not full:
+                print("Screen soft deinit completed")
+                return
+
+            # 2/3. full=True 时清理LVGL对象与缓冲区
             if hasattr(self, 'canvas') and self.canvas:
                 self.canvas = None
             if hasattr(self, 'img') and self.img:
                 self.img = None
             if hasattr(self, 'screen') and self.screen:
                 self.screen = None
-            
-            # 3. 清理缓冲区
             if hasattr(self, 'canvas_buf'):
                 self.canvas_buf = None
             if hasattr(self, 'img_dsc'):
                 self.img_dsc = None
+
+            # 4/5. 重度释放仅在 full=True 时执行
+            if full:
+                if hasattr(self, 'spi_bus') and self.spi_bus:
+                    print("Screen deinit spi_bus")
+                    self.spi_bus.deinit()
+                    self.spi_bus = None
+                if hasattr(self, 'display_bus') and self.display_bus:
+                    print("Screen deinit display_bus")
+                    self.display_bus.deinit()
+                    self.display_bus = None
+                    print("Screen deinit lv")
+                    lv.deinit()
             
-            # 4. 清理SPI总线
-            if hasattr(self, 'spi_bus') and self.spi_bus:
-                print("Screen deinit spi_bus")
-                self.spi_bus.deinit()
-                self.spi_bus = None
-            
-            # 5. 清理显示总线
-            if hasattr(self, 'display_bus') and self.display_bus:
-                print("Screen deinit display_bus")
-                self.display_bus.deinit()
-                self.display_bus = None
-                print("Screen deinit lv")
-                lv.deinit()
-            
-            # 6. 关闭屏幕背光
-            try:
-                myi2c = I2C(0, scl=Pin(48), sda=Pin(47), freq=100000)
-                temp = myi2c.readfrom_mem(0x20, 0x02, 1)
-                myi2c.writeto(0x20, bytearray([0x02, (temp[0] & 0xFE)]))  # 关闭背光
-                myi2c.deinit()
-            except:
-                pass
+            # 6. 默认不关闭背光电源位，避免 Ctrl+C 后再次 Run 出现 USB/串口掉线
+            if backlight_off:
+                try:
+                    myi2c = I2C(0, scl=Pin(48), sda=Pin(47), freq=100000)
+                    temp = myi2c.readfrom_mem(0x20, 0x02, 1)
+                    myi2c.writeto(0x20, bytearray([0x02, (temp[0] & 0xFE)]))  # 关闭背光
+                    myi2c.deinit()
+                except:
+                    pass
             
             print("Screen deinit completed")
         except Exception as e:
             print(f"Error in Screen deinit: {e}")
+        finally:
+            # full 释放后，允许下次完整 init；软回收保持 init 状态，避免重复创建对象。
+            if full:
+                self._screen_init_done = False
 
 
 class Wifibase(object):
