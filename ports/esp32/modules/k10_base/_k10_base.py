@@ -28,12 +28,58 @@ def _k10_ensure_lv_fs():
 def _k10_to_lv_path(path):
     if not path:
         return None
-    p = str(path)
+    if isinstance(path, bytes):
+        try:
+            p = path.decode("utf-8")
+        except Exception:
+            return None
+    else:
+        p = str(path)
     if p.startswith("S:"):
         return p
     if p.startswith("/"):
         return "S:" + p
     return "S:/" + p
+
+def _k10_lv_path_candidates(path):
+    lv_path = _k10_to_lv_path(path)
+    if lv_path is None:
+        return ()
+    # 先尝试 str；非 ASCII 文件名再回退尝试 utf-8 bytes
+    candidates = [lv_path]
+    try:
+        if any(ord(ch) > 127 for ch in lv_path):
+            candidates.append(lv_path.encode("utf-8"))
+    except Exception:
+        pass
+    return tuple(candidates)
+
+def _k10_abs_path(path):
+    if not isinstance(path, str):
+        raise TypeError("path must be str")
+    p = path.strip()
+    if not p:
+        raise ValueError("path must not be empty")
+    if p.startswith("/"):
+        return p
+    import os
+    cwd = os.getcwd()
+    if cwd.endswith("/"):
+        return cwd + p
+    return cwd + "/" + p
+
+def _k10_ensure_exists(path, kind="path"):
+    import uos
+    try:
+        uos.stat(path)
+    except OSError:
+        raise OSError("{} not found: {}".format(kind, path))
+
+def _k10_parent_dir(path):
+    idx = path.rfind("/")
+    if idx <= 0:
+        return "/"
+    return path[:idx]
 
 '''
 K10的引脚操作类
@@ -1077,7 +1123,8 @@ class Mic(object):
             print(f"录音失败: {e}")
             raise
     def recode_sys(self, name="",time=10):
-        full_path = "/" + name
+        full_path = _k10_abs_path(name)
+        _k10_ensure_exists(_k10_parent_dir(full_path), "directory")
         self.recode_to_wav(path=full_path, time=time)
 
     def recode_tf(self, name="",time=10):
@@ -1332,7 +1379,8 @@ class Speaker(object):
         self.currentOctave = current_octave
 
     def play_sys_music(self,path):
-        full_path = "/" + path
+        full_path = _k10_abs_path(path)
+        _k10_ensure_exists(full_path, "file")
         self.play_music(full_path)
 
     def play_tf_music(self, path):
@@ -1629,9 +1677,10 @@ class Screen(object):
                     print("draw_sys_img: screen not initialized")
                 return False
 
-            raw_path = str(image)
-            lv_path = _k10_to_lv_path(raw_path)
-            if lv_path is None:
+            raw_path = _k10_abs_path(image)
+            _k10_ensure_exists(raw_path, "file")
+            lv_path_list = _k10_lv_path_candidates(raw_path)
+            if not lv_path_list:
                 if debug:
                     print("draw_sys_img: invalid path")
                 return False
@@ -1639,7 +1688,7 @@ class Screen(object):
             _k10_ensure_lv_fs()
             img_x = int(x)
             img_y = int(y)
-            key = (lv_path, img_x, img_y)
+            key = (raw_path, img_x, img_y)
 
             # 支持同一图片在不同坐标重复显示：每个(src, x, y)一个独立image对象
             if not hasattr(self, '_sys_img_items') or self._sys_img_items is None:
@@ -1648,17 +1697,29 @@ class Screen(object):
             img_obj = self._sys_img_items.get(key, None)
             if img_obj is None:
                 img_obj = lv.image(self.screen)
-                # 首次加载优先直接解码，失败时再做一次 GC 后重试，减少首帧阻塞。
-                try:
-                    img_obj.set_src(lv_path)
-                except Exception as e:
-                    gc.collect()
+                # 首次加载优先直接解码；对中文路径额外尝试 utf-8 bytes 形式。
+                set_ok = False
+                last_err = None
+                for lv_path in lv_path_list:
                     try:
                         img_obj.set_src(lv_path)
-                    except Exception as e2:
-                        if debug:
-                            print("draw_sys_img: set_src failed:", e, e2)
-                        return False
+                        set_ok = True
+                        break
+                    except Exception as e:
+                        last_err = e
+                if not set_ok:
+                    gc.collect()
+                    for lv_path in lv_path_list:
+                        try:
+                            img_obj.set_src(lv_path)
+                            set_ok = True
+                            break
+                        except Exception as e:
+                            last_err = e
+                if not set_ok:
+                    if debug:
+                        print("draw_sys_img: set_src failed:", last_err)
+                    return False
                 self._sys_img_items[key] = img_obj
 
             img_obj.set_pos(img_x, img_y)

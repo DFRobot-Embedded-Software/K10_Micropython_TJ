@@ -907,6 +907,40 @@ class dht(object):
         """返回当前生效的传感器类型。"""
         return self._active_type
 
+class neopixel():
+    def __init__(self, io, n, bpp=3, timing=1):
+        '''
+        if isinstance(io, pin):
+            self.pin = pins_remap_k10[io.pin_num]
+        else:
+            self.pin = io
+        '''
+        if io > 20:
+            self.pin = io
+        else:
+            self.pin = pins_remap_k10[io]
+        #pins_remap_k10[pin]
+        self.my_rgb = NeoPixel(Pin(self.pin, Pin.OUT), n, bpp, timing)
+        self.bright = 9
+
+    def brightness(self,bright=9):
+        if bright <= 9 and bright >= 0:
+            self.bright = bright
+
+    def write(self,begin,end,R=0,G=0,B=0):
+        self.r = int(R/(10-self.bright))
+        self.g = int(G/(10-self.bright))
+        self.b = int(B/(10-self.bright))
+        for i in range(begin,end+1):
+            self.my_rgb[i] = (self.r, self.g, self.b)
+            self.my_rgb.write()
+            time.sleep(0.001)        
+        
+    def clear(self):
+        self.my_rgb.fill((0,0,0))
+        self.my_rgb.write()
+        time.sleep(0.001)
+
 light = Light()
 
 speaker = Speaker()
