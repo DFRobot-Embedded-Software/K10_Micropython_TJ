@@ -81,6 +81,104 @@ def _k10_parent_dir(path):
         return "/"
     return path[:idx]
 
+def _k10_tf_path(name):
+    if not isinstance(name, str):
+        raise TypeError("name must be str")
+    name = name.strip()
+    if not name:
+        raise ValueError("name must not be empty")
+    if name.startswith("/sd/"):
+        return name
+    return "/sd/" + name
+
+def _k10_prepare_sd(path):
+    if path.startswith("/sd/"):
+        if not smart_sd_mount():
+            raise Exception("SD卡智能挂载失败")
+
+_K10_FRAME_BYTES = 240 * 320 * 2
+_K10_SCR_W = 240
+_K10_SCR_H = 320
+
+def _k10_rgb565_to_bmp24(path, rgb565_data, swap=True):
+    """Write standard 24-bit BMP (PC-readable) from RGB565 camera frame."""
+    width = _K10_SCR_W
+    height = _K10_SCR_H
+    if len(rgb565_data) != _K10_FRAME_BYTES:
+        raise OSError("Invalid frame size")
+
+    frame = bytearray(rgb565_data)
+    if swap:
+        try:
+            lv.draw_sw_rgb565_swap(frame, len(frame))
+        except Exception:
+            pass
+
+    row_size = ((width * 3 + 3) // 4) * 4
+    pixel_data_size = row_size * height
+    file_size = 54 + pixel_data_size
+    header = bytearray(54)
+    header[0:2] = b"BM"
+    struct.pack_into("<I", header, 2, file_size)
+    struct.pack_into("<I", header, 10, 54)
+    struct.pack_into("<I", header, 14, 40)
+    struct.pack_into("<i", header, 18, width)
+    struct.pack_into("<i", header, 22, height)
+    struct.pack_into("<H", header, 26, 1)
+    struct.pack_into("<H", header, 28, 24)
+    struct.pack_into("<I", header, 34, pixel_data_size)
+
+    row = bytearray(row_size)
+    with open(path, "wb") as f:
+        f.write(header)
+        for y in range(height - 1, -1, -1):
+            off = 0
+            base = y * width * 2
+            for x in range(width):
+                i = base + x * 2
+                pixel = frame[i] | (frame[i + 1] << 8)
+                r = ((pixel >> 11) & 0x1F) * 255 // 31
+                g = ((pixel >> 5) & 0x3F) * 255 // 63
+                b = (pixel & 0x1F) * 255 // 31
+                row[off] = b
+                row[off + 1] = g
+                row[off + 2] = r
+                off += 3
+            f.write(row)
+
+def _k10_bmp24_to_rgb565(data):
+    """Read 24-bit BMP (written by _k10_rgb565_to_bmp24) back to RGB565."""
+    width = _K10_SCR_W
+    height = _K10_SCR_H
+    if len(data) < 54 or data[:2] != b"BM":
+        raise OSError("Not a BMP file")
+    w = struct.unpack_from("<i", data, 18)[0]
+    h = struct.unpack_from("<i", data, 22)[0]
+    if w != width or h != height:
+        raise OSError("Unsupported BMP size")
+    row_size = ((width * 3 + 3) // 4) * 4
+    if len(data) < 54 + row_size * height:
+        raise OSError("Truncated BMP file")
+    frame = bytearray(_K10_FRAME_BYTES)
+    offset = 54
+    for bmp_y in range(height):
+        row = data[offset:offset + row_size]
+        offset += row_size
+        screen_y = height - 1 - bmp_y
+        base = screen_y * width * 2
+        for x in range(width):
+            b = row[x * 3]
+            g = row[x * 3 + 1]
+            r = row[x * 3 + 2]
+            r5 = (r * 31 + 127) // 255
+            g6 = (g * 63 + 127) // 255
+            b5 = (b * 31 + 127) // 255
+            pixel = (r5 << 11) | (g6 << 5) | b5
+            i = base + x * 2
+            frame[i] = pixel & 0xFF
+            frame[i + 1] = (pixel >> 8) & 0xFF
+    return frame
+
 '''
 K10的引脚操作类
 K10分为原生esp32S3的引脚和IO扩展芯片的引脚
@@ -820,7 +918,7 @@ _sd_card_mounted = False
 _sd_card_obj = None
 _sd_working_freq = 10000000
 
-def smart_sd_mount():
+def smart_sd_mount(verbose=False):
     """智能SD卡挂载，避免重复初始化 SPI/SDCard。"""
     global _sd_card_mounted, _sd_card_obj, _sd_working_freq
     import uos
@@ -833,6 +931,8 @@ def smart_sd_mount():
         try:
             uos.statvfs("/sd")
             uos.listdir("/sd")
+            if verbose:
+                print("[sd] already mounted (cache)")
             return True
         except Exception:
             _sd_card_mounted = False
@@ -843,18 +943,22 @@ def smart_sd_mount():
         uos.statvfs("/sd")
         uos.listdir("/sd")
         _sd_card_mounted = True
+        if verbose:
+            print("[sd] already mounted")
         return True
     except:
         pass
     
-    #print("=== 智能SD卡挂载 ===")
+    if verbose:
+        print("[sd] start mount")
     
     # 尝试之前成功过的频率（如果有的话）
     working_frequencies = [_sd_working_freq, 10000000, 5000000, 1000000, 20000000]
     
     for freq in working_frequencies:
         try:
-            #print(f"尝试频率: {freq} Hz")
+            if verbose:
+                print("[sd] try freq={}".format(freq))
             
             # 清理所有挂载点
             for mount_point in ["/sd", "/sd0", "/sd1", "/sd2"]:
@@ -866,7 +970,11 @@ def smart_sd_mount():
             time.sleep(0.3)
             
             # 创建SD卡对象
+            if verbose:
+                print("[sd] SDCard init...")
             _sd_card_obj = SDCard(slot=2, miso=41, mosi=42, sck=44, cs=40, freq=freq)
+            if verbose:
+                print("[sd] vfs mount...")
             vfs.mount(_sd_card_obj, "/sd")
             
             # 等待挂载完成
@@ -877,9 +985,13 @@ def smart_sd_mount():
             uos.listdir("/sd")
             _sd_card_mounted = True
             _sd_working_freq = freq
+            if verbose:
+                print("[sd] ok freq={}".format(freq))
             return True
             
         except Exception as e:
+            if verbose:
+                print("[sd] fail freq={}: {}".format(freq, e))
             _sd_card_mounted = False
             try:
                 if _sd_card_obj:
@@ -889,7 +1001,8 @@ def smart_sd_mount():
             _sd_card_obj = None
             continue
     
-    #print("✗ 智能挂载失败")
+    if verbose:
+        print("[sd] all attempts failed")
     return False    
 class Mic(object):
     def __init__(self,bits=16,sample_rate=16000,channels=1):
@@ -1088,12 +1201,7 @@ class Mic(object):
         file.write(data_size.to_bytes(4, 'little'))
 
     def recode_to_wav(self,path,time):
-        # 如果是 SD 卡路径，确保 SD 卡已挂载
-        if path.startswith("/sd/"):
-            # 使用智能挂载，自动处理重试
-            if not smart_sd_mount():
-                raise Exception("SD卡智能挂载失败")
-        
+        _k10_prepare_sd(path)
         self.reinit(bits = self.bits, sample_rate = self.sample_rate, channels=self.channels)
         #创建录音缓存区
         buffer_size = 1024
@@ -1128,13 +1236,9 @@ class Mic(object):
         self.recode_to_wav(path=full_path, time=time)
 
     def recode_tf(self, name="",time=10):
-        # 确保文件名有 .wav 扩展名
         if not name.endswith('.wav'):
             name += '.wav'
-        
-        full_path = "/sd/" + name
-        
-        # 只使用SD卡存储
+        full_path = _k10_tf_path(name)
         self.recode_to_wav(path=full_path, time=time)
 '''
 def ensure_sd_mounted():
@@ -1384,11 +1488,8 @@ class Speaker(object):
         self.play_music(full_path)
 
     def play_tf_music(self, path):
-        full_path = "/sd/" + path
-        if full_path.startswith("/sd/"):
-            # 使用智能挂载，自动处理重试
-            if not smart_sd_mount():
-                raise Exception("SD卡智能挂载失败")
+        full_path = _k10_tf_path(path)
+        _k10_prepare_sd(full_path)
         self.play_music(full_path)
         
     def play_music(self,path):
@@ -1476,6 +1577,7 @@ class Screen(object):
         self.display_bus = Ili9341(spi= self.spi_bus, cs=14, dc=13,rot=dir)
         self.linewidth = 1
         self._camera_running = False
+        self._camera_obj = None
         # Thonny 多次 Run 时模块缓存，screen 单例复用；重复 init 会重复创建 LVGL/canvas 导致崩溃
         self._screen_init_done = False
         
@@ -1522,13 +1624,13 @@ class Screen(object):
         self.clear_rect = lv.draw_rect_dsc_t()
         
         # 创建初始的黑色图像数据
-        initial_buf = bytearray(240*320*2)  # 全零，即黑色
-        
+        self.display_buf = bytearray(_K10_FRAME_BYTES)
+
         self.img_dsc = lv.image_dsc_t(
             dict(
                 header = dict(cf =lv.COLOR_FORMAT.RGB565, w=240, h=320),
-                data_size = 240*320*2,
-                data = bytes(initial_buf)
+                data_size = _K10_FRAME_BYTES,
+                data = self.display_buf
             )
         )
         #显示摄像头画面的timer
@@ -1796,17 +1898,17 @@ class Screen(object):
         lv.draw_image(self.layer,self.desc, area)
         lv.screen_load(self.screen)
 
-    def show_camera_img(self,buf):
+    def show_camera_img(self, buf, swap=True):
         try:
-            # 快速检查，严格匹配 240x320 RGB565 帧
-            if buf is None or len(buf) != 240*320*2:
+            if buf is None or buf is False:
+                return
+            if len(buf) != _K10_FRAME_BYTES:
                 return
 
-            # 持久化初始化：display_buf / img_dsc / img 只创建一次
             if not hasattr(self, 'display_buf'):
-                self.display_buf = bytearray(240*320*2)
+                self.display_buf = bytearray(_K10_FRAME_BYTES)
 
-            buflen = 240*320*2
+            buflen = _K10_FRAME_BYTES
 
             if not hasattr(self, 'img') or self.img is None:
                 self.img = lv.image(self.screen)
@@ -1819,51 +1921,108 @@ class Screen(object):
                     lv.screen_load(self.screen)
                 except:
                     pass
-                try:
-                    self.img.align(lv.ALIGN.CENTER, 0, 0)
-                except:
-                    pass
-                try:
-                    lv.screen_load(self.screen)
-                except:
-                    pass
 
-            # 将输入帧拷贝到自有缓冲，避免依赖外部生命周期
-            if isinstance(buf, (bytes, bytearray)):
+            if isinstance(buf, (bytes, bytearray, memoryview)):
                 self.display_buf[:buflen] = buf
             else:
-                # 兜底：尽量从缓冲协议读取
                 b = bytes(buf)
                 if len(b) != buflen:
                     return
                 self.display_buf[:buflen] = b
 
-            # 如需RGB565字节交换可打开下一行
-            # 按原始实现启用RGB565字节交换（若颜色不对可注释掉）
-            try:
-                lv.draw_sw_rgb565_swap(self.display_buf, buflen)
-            except:
-                pass
+            if swap:
+                try:
+                    lv.draw_sw_rgb565_swap(self.display_buf, buflen)
+                except:
+                    pass
 
-            # 更新同一个 img_dsc 的数据并刷新
-            self.img_dsc.data = bytes(self.display_buf)
+            self.img_dsc.data = self.display_buf
             self.img.set_src(self.img_dsc)
-            # 确保首次已加载并可见
             try:
                 lv.screen_load(self.screen)
             except:
                 pass
-            
-            # 使用非阻塞刷新，避免阻塞串口通信
             try:
                 self.img.invalidate()
             except:
-                # 如果刷新失败，静默处理
                 pass
-            
-        except Exception as e:
-            # 在中断或异常情况下静默处理，避免影响主程序
+
+        except Exception:
             pass
+
+    def save_to_bmp(self, path, resume_preview=True):
+        """Save camera frame as standard 24-bit BMP (readable on PC)."""
+        resume_camera = getattr(self, '_camera_obj', None) if resume_preview else None
+        self.stop_camera()
+        try:
+            if not getattr(self, "_screen_init_done", False):
+                self.init()
+            _k10_prepare_sd(path)
+            camera.capture()
+            buf = camera.capture()
+            if not buf or len(buf) != _K10_FRAME_BYTES:
+                raise OSError("Failed to capture camera frame")
+            self.show_camera_img(buf)
+            if not hasattr(self, 'display_buf'):
+                raise OSError("Display buffer not ready")
+            _k10_rgb565_to_bmp24(path, self.display_buf, swap=False)
+            try:
+                import uos
+                uos.stat(path)[6]
+            except Exception:
+                raise OSError("BMP file verify failed")
+        finally:
+            if resume_camera is not None:
+                self.show_camera(resume_camera)
+
+    def save(self, name="path/photo.bmp", resume_preview=True):
+        """Capture camera frame and save to TF card (same pattern as Mic.recode_tf)."""
+        if not name.endswith('.bmp'):
+            name += '.bmp'
+        full_path = _k10_tf_path(name)
+        self.save_to_bmp(full_path, resume_preview=resume_preview)
+        return full_path
+
+    def show_tfcardpic(self, name="path/photo.bmp", x=0, y=0, debug=False):
+        """Display a photo saved by save()/save_to_bmp() from TF card."""
+        if not getattr(self, "_screen_init_done", False):
+            self.init()
+        full_path = _k10_tf_path(name)
+        _k10_prepare_sd(full_path)
+        self.stop_camera()
+        try:
+            with open(full_path, "rb") as f:
+                data = f.read()
+            if len(data) == _K10_FRAME_BYTES:
+                self.show_camera_img(data)
+                return True
+            if len(data) > 2 and data[:2] == b"BM":
+                frame = _k10_bmp24_to_rgb565(data)
+                self.show_camera_img(frame, swap=False)
+                return True
+            raise OSError("Unsupported image format")
+        except Exception as e:
+            if debug:
+                print("show_tfcardpic failed:", e)
+            return False
+
+    def _camera_preview_tick(self, camera):
+        if not getattr(self, '_camera_running', False):
+            return
+        buf = camera.camera_capture()
+        if not buf or buf is False:
+            n = getattr(self, '_capture_fail_count', 0) + 1
+            self._capture_fail_count = n
+            if n in (1, 30, 100):
+                print("[preview] capture failed x{} (WiFi后内存不足?)".format(n))
+            return
+        try:
+            if len(buf) != _K10_FRAME_BYTES:
+                return
+        except TypeError:
+            return
+        self._capture_fail_count = 0
+        self.show_camera_img(buf)
 
     def show_camera(self,camera):
         # 停掉已有的定时器，避免重复
@@ -1873,9 +2032,10 @@ class Screen(object):
         except:
             pass
         self.camera_timer = None
+        self._camera_obj = camera
         self._camera_running = True
-        # 以 ~30 FPS 刷新，降低CPU占用，避免阻塞串口
-        self.camera_timer = lv.timer_create(lambda t: self.show_camera_img(camera.camera_capture()), 33, None)
+        self._capture_fail_count = 0
+        self.camera_timer = lv.timer_create(lambda t: self._camera_preview_tick(camera), 33, None)
 
     def stop_camera(self):
         # 安全停止摄像头显示定时器
@@ -1891,7 +2051,7 @@ class Screen(object):
         """安全的摄像头图像显示函数，专门用于处理中断情况"""
         try:
             # 快速检查，避免不必要的处理
-            if buf is None or len(buf) != 240*320*2:
+            if buf is None or len(buf) != _K10_FRAME_BYTES:
                 return False
             
             # 检查是否在中断状态，如果是则跳过显示

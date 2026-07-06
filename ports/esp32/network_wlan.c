@@ -232,7 +232,7 @@ void esp_initialise_wifi(void) {
             // These can be determined from ESP-IDF components/esp_wifi/Kconfig and the
             // WIFI_INIT_CONFIG_DEFAULT macro
             cfg.tx_buf_type = 1; // Dynamic, this "magic number" is defined in IDF KConfig
-            cfg.static_tx_buf_num = 0; // Probably don't need, due to tx_buf_type
+            cfg.static_tx_buf_num = 0; // Probably don't need, due to tx_buf_type0
             cfg.dynamic_tx_buf_num = 32; // ESP-IDF default value (maximum)
         }
         #endif

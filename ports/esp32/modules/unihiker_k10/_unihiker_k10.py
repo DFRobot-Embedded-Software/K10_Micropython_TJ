@@ -7,7 +7,33 @@ import machine,onewire, struct,gc,math
 from ds18x20 import DS18X20
 from hcsr04 import HCSR04
 from dht import DHT11, DHT22
+import ubinascii
+from k10_base import smart_sd_mount
 gc.collect()  
+
+def _tf_image_path(name):
+    if not isinstance(name, str):
+        raise TypeError("name must be str")
+    name = name.strip()
+    if not name:
+        raise ValueError("name must not be empty")
+    if name.startswith("/sd/"):
+        return name
+    return "/sd/" + name
+
+class base64(object):
+    @staticmethod
+    def image_to_base64(name):
+        """Read TF card image file and return base64 string."""
+        path = _tf_image_path(name)
+        if path.startswith("/sd/"):
+            if not smart_sd_mount():
+                raise Exception("SD卡智能挂载失败")
+        with open(path, "rb") as f:
+            data = f.read()
+        if not data:
+            raise OSError("Empty file: {}".format(path))
+        return ubinascii.b2a_base64(data).decode().strip()
 
 '''
 六轴的驱动类

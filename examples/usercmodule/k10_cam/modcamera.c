@@ -85,7 +85,7 @@
          { MP_QSTR_siod,            MP_ARG_KW_ONLY  | MP_ARG_INT,   {.u_int = CAM_PIN_SIOD} },
          { MP_QSTR_sioc,            MP_ARG_KW_ONLY  | MP_ARG_INT,   {.u_int = CAM_PIN_SIOC} },
          { MP_QSTR_xclk_freq,       MP_ARG_KW_ONLY  | MP_ARG_INT,   {.u_int = XCLK_FREQ_10MHz} },
-         { MP_QSTR_fb_size,         MP_ARG_KW_ONLY  | MP_ARG_INT,   {.u_int = 4} },
+         { MP_QSTR_fb_size,         MP_ARG_KW_ONLY  | MP_ARG_INT,   {.u_int = 2} },
          { MP_QSTR_fb_location,     MP_ARG_KW_ONLY  | MP_ARG_INT,   {.u_int = CAMERA_FB_IN_PSRAM} },
      };
  

@@ -146,5 +146,59 @@ Before compiling a given port, use
 
 to ensure that all required submodules are initialised.
 
+K10 / ESP32 调试日志（ESP_LOGE）
+---------------------------------
+
+C 扩展（如 `examples/usercmodule/k10_cam/modcamera.c`）里的 `ESP_LOGE` 会输出到
+USB 串口。默认固件已开启 **ERROR** 级别，失败时可见类似：
+
+    E (12345) camera: Camera Init Failed
+
+### 在 Thonny / REPL 中打开日志
+
+```python
+import esp
+
+esp.osdebug(0)                      # 打开系统日志
+esp.osdebug(0, esp.LOG_ERROR)       # 仅 ERROR（含 ESP_LOGE）
+esp.osdebug(0, esp.LOG_INFO)        # INFO / WARN / ERROR
+esp.osdebug(None)                   # 恢复默认（仅 ERROR）
+```
+
+触发摄像头后再看 Shell 输出：
+
+```python
+import esp
+esp.osdebug(0, esp.LOG_INFO)
+
+import camera
+try:
+    camera.init(0)
+except OSError as e:
+    print("Python:", e)
+```
+
+### 用串口监视器（推荐，日志更完整）
+
+```bash
+cd ports/esp32
+idf.py -p /dev/ttyACM0 monitor
+```
+
+或使用 picocom / miniterm（端口按实际修改）：
+
+```bash
 picocom /dev/ttyACM0 -b 115200
+python3 -m serial.tools.miniterm /dev/ttyACM0 115200
+```
+
+### 日志级别说明
+
+| Python 调用 | 可见 C 日志 |
+|-------------|-------------|
+| `esp.osdebug(None)` | `ESP_LOGE` |
+| `esp.osdebug(0, esp.LOG_INFO)` | `ESP_LOGI` / `ESP_LOGW` / `ESP_LOGE` |
+| `esp.osdebug(0, esp.LOG_DEBUG)` | 需固件编译时开启 DEBUG 级别 |
+
+相关源码：`ports/esp32/modesp.c`（`esp.osdebug`）、`ports/esp32/boards/sdkconfig.base`（默认 `LOG_ERROR`）。
 
