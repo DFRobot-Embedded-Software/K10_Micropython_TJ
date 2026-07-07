@@ -108,6 +108,8 @@
   - `def play_next_note(self, tone)`
   - `def play_sys_music(self, path)`
   - `def play_tf_music(self, path)`
+  - `def stop_sys_music(self, path)`
+  - `def stop_tf_music(self, path)`
   - `def play_music(self, path)`
   - `def stop_music(self)`
 

@@ -23,8 +23,29 @@ def _tf_image_path(name):
 
 class base64(object):
     @staticmethod
-    def image_to_base64(name):
-        """Read TF card image file and return base64 string."""
+    def _encode_bytes(data):
+        # newline=False: 嵌入换行会导致网页 atob()/img 无法解码
+        return ubinascii.b2a_base64(data, newline=False).decode()
+
+    @staticmethod
+    def _mime_for_image(data, path):
+        if len(data) >= 2 and data[:2] == b"BM":
+            return "image/bmp"
+        if path.lower().endswith(".bmp"):
+            return "image/bmp"
+        if path.lower().endswith(".png"):
+            return "image/png"
+        if path.lower().endswith((".jpg", ".jpeg")):
+            return "image/jpeg"
+        return "application/octet-stream"
+
+    @staticmethod
+    def image_to_base64(name, data_uri=False):
+        """Read TF card image file and return base64 string.
+
+        data_uri=True 时返回网页可直接用的 Data URL，例如:
+        data:image/bmp;base64,xxxx
+        """
         path = _tf_image_path(name)
         if path.startswith("/sd/"):
             if not smart_sd_mount():
@@ -33,7 +54,16 @@ class base64(object):
             data = f.read()
         if not data:
             raise OSError("Empty file: {}".format(path))
-        return ubinascii.b2a_base64(data).decode().strip()
+        b64 = base64._encode_bytes(data)
+        if data_uri:
+            mime = base64._mime_for_image(data, path)
+            return "data:{};base64,{}".format(mime, b64)
+        return b64
+
+    @staticmethod
+    def image_to_data_uri(name):
+        """Return Data URL for HTML img.src / MQTT to web."""
+        return base64.image_to_base64(name, data_uri=True)
 
 '''
 六轴的驱动类

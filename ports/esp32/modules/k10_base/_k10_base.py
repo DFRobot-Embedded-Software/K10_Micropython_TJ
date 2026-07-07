@@ -1356,6 +1356,8 @@ class Speaker(object):
         self.currentOctave = 4    # Middle octave
         self.beatsPerMinute = 15  # Default BPM
         self.TWO_PI = 6.283185307179586476925286766559
+        self._play_stop = False
+        self._play_path = None
         self.music_notes={"DADADADUM":"r4:2|g|g|g|eb:8|r:2|f|f|f|d:8|",
                           "ENTERTAINER":"d4:1|d#|e|c5:2|e4:1|c5:2|e4:1|c5:3|c:1|d|d#|e|c|d|e:2|b4:1|d5:2|c:4|",
                           "PRELUDE":"c4:1|e|g|c5|e|g4|c5|e|c4|e|g|c5|e|g4|c5|e|c4|d|g|d5|f|g4|d5|f|c4|d|g|d5|f|g4|d5|f|b3|d4|g|d5|f|g4|d5|f|b3|d4|g|d5|f|g4|d5|f|c4|e|g|c5|e|g4|c5|e|c4|e|g|c5|e|g4|c5|e|",
@@ -1485,42 +1487,88 @@ class Speaker(object):
     def play_sys_music(self,path):
         full_path = _k10_abs_path(path)
         _k10_ensure_exists(full_path, "file")
-        self.play_music(full_path)
+        self._start_music_async(full_path)
 
     def play_tf_music(self, path):
         full_path = _k10_tf_path(path)
         _k10_prepare_sd(full_path)
-        self.play_music(full_path)
-        
-    def play_music(self,path):
-        #使能功放(k10 box才有的功能)
+        self._start_music_async(full_path)
+
+    def stop_sys_music(self, path):
+        full_path = _k10_abs_path(path)
+        return self._stop_music_path(full_path)
+
+    def stop_tf_music(self, path):
+        full_path = _k10_tf_path(path)
+        return self._stop_music_path(full_path)
+
+    def _start_music_async(self, path):
+        if self._play_path is not None:
+            self.stop_music()
+            time.sleep_ms(20)
+        self._play_stop = False
+        self._play_path = path
+        _thread.start_new_thread(self._run_music, (path,))
+
+    def _stop_music_path(self, full_path):
+        if self._play_path == full_path:
+            self.stop_music()
+            return True
+        return False
+
+    def _music_amp_on(self):
         try:
-            self._i2c.writeto_mem(0x20,0x2A,bytearray([0x01]))
-        except:
-            pass
-        #打开WAV文件
-        with open(path,"rb") as wav_file:
-            sample_rate, bits_per_sample, num_channels = self.parse_wav_header(wav_file)
-            self.reinit(bits=bits_per_sample,sample_rate=sample_rate,channels=num_channels)
-            while True:
-                audio_buf = wav_file.read(1024)
-                if not audio_buf:
-                    break
-                self.i2s.write(audio_buf)
-        self.i2s.deinit()
-        #失能功放
-        try:
-            self._i2c.writeto_mem(0x20,0x2A,bytearray([0x00]))
+            self._i2c.writeto_mem(0x20, 0x2A, bytearray([0x01]))
         except:
             pass
 
-    def stop_music(self):
-        self.i2s.deinit()
-        #失能功放
+    def _music_amp_off(self):
         try:
-            self._i2c.writeto_mem(0x20,0x2A,bytearray([0x00]))
+            self._i2c.writeto_mem(0x20, 0x2A, bytearray([0x00]))
         except:
             pass
+
+    def play_music(self,path):
+        self._play_stop = False
+        self._play_path = path
+        self._run_music(path)
+
+    def _run_music(self, path):
+        try:
+            self._music_amp_on()
+            with open(path, "rb") as wav_file:
+                sample_rate, bits_per_sample, num_channels = self.parse_wav_header(wav_file)
+                self.reinit(bits=bits_per_sample, sample_rate=sample_rate, channels=num_channels)
+                while not self._play_stop:
+                    audio_buf = wav_file.read(1024)
+                    if not audio_buf:
+                        break
+                    try:
+                        self.i2s.write(audio_buf)
+                    except OSError:
+                        break
+        except Exception:
+            pass
+        finally:
+            try:
+                if self.i2s:
+                    self.i2s.deinit()
+            except:
+                pass
+            self._music_amp_off()
+            if self._play_path == path:
+                self._play_path = None
+            self._play_stop = False
+
+    def stop_music(self):
+        self._play_stop = True
+        self._play_path = None
+        try:
+            if self.i2s:
+                self.i2s.deinit()
+        except:
+            pass
+        self._music_amp_off()
 
 
 
