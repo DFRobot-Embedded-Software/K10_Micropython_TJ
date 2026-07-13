@@ -1628,12 +1628,56 @@ class Screen(object):
         self._camera_obj = None
         # Thonny 多次 Run 时模块缓存，screen 单例复用；重复 init 会重复创建 LVGL/canvas 导致崩溃
         self._screen_init_done = False
-        
+        self._screen_dir = dir
+
+    def _canvas_wh(self):
+        # 方向 1/3 为横屏 320x240；0/2 为竖屏 240x320
+        if self._screen_dir in (1, 3):
+            return 320, 240
+        return 240, 320
+
+    def _text_wrap_width(self):
+        return self._canvas_wh()[0]
+
+    def _update_canvas_for_dir(self):
+        """随屏幕方向调整 LVGL 显示分辨率与 canvas 缓冲区。"""
+        if not hasattr(self, 'canvas') or self.canvas is None:
+            return
+        cw, ch = self._canvas_wh()
+        try:
+            disp = getattr(self.display_bus, 'disp_drv', None)
+            if disp is not None:
+                disp.set_resolution(cw, ch)
+        except Exception:
+            pass
+        try:
+            if hasattr(self, 'screen') and self.screen is not None:
+                self.screen.set_size(cw, ch)
+        except Exception:
+            pass
+        buf_len = cw * ch * 4
+        if not hasattr(self, 'canvas_buf') or self.canvas_buf is None or len(self.canvas_buf) != buf_len:
+            self.canvas_buf = bytearray(buf_len)
+        self.canvas.set_size(cw, ch)
+        try:
+            self.canvas.set_pos(0, 0)
+        except Exception:
+            try:
+                self.canvas.align(lv.ALIGN.TOP_LEFT, 0, 0)
+            except Exception:
+                pass
+        self.canvas.set_buffer(self.canvas_buf, cw, ch, lv.COLOR_FORMAT.ARGB8888)
+        self.canvas.fill_bg(lv.color_white(), lv.OPA.TRANSP)
+        if hasattr(self, 'layer') and self.layer is not None:
+            self.canvas.init_layer(self.layer)
+
     #初始化屏幕，设置方向为(0~3)
     def init(self,dir=2):
+        self._screen_dir = dir
         if getattr(self, "_screen_init_done", False):
             try:
                 self.display_bus.apply_rotation(dir)
+                self._update_canvas_for_dir()
             except Exception:
                 pass
             return
@@ -1661,13 +1705,8 @@ class Screen(object):
         self.canvas.set_scrollbar_mode(lv.SCROLLBAR_MODE.OFF)
 
 
-        self.canvas.set_size(240,320)
-        self.canvas.align(lv.ALIGN.CENTER, 0, 0)
-        self.canvas_buf = bytearray(240*320*4)
-        self.canvas.set_buffer(self.canvas_buf, 240, 320, lv.COLOR_FORMAT.ARGB8888)
-        self.canvas.fill_bg(lv.color_white(), lv.OPA.TRANSP)
         self.layer = lv.layer_t()
-        self.canvas.init_layer(self.layer)
+        self._update_canvas_for_dir()
         self.area = lv.area_t()
         self.clear_rect = lv.draw_rect_dsc_t()
         
@@ -1737,9 +1776,29 @@ class Screen(object):
         else:
             self.area.x1 = 0
             self.area.y1 = line * (font_size + 2)
-        self.area.set_width(240-self.area.x1)
-        self.area.set_height(font_size + 2)
-
+        line_space = 2
+        cw, ch = self._canvas_wh()
+        max_w = self._text_wrap_width() - self.area.x1
+        if max_w < 1:
+            max_w = 1
+        self.desc.line_space = line_space
+        self.desc.letter_space = 0
+        self.desc.flag = 0
+        self.area.set_width(max_w)
+        try:
+            text_size = lv.point_t()
+            text_size.x = 0
+            text_size.y = 0
+            lv.txt_get_size(text_size, text, self.desc.font, 0, line_space, max_w, 0)
+            text_h = text_size.y if text_size.y > 0 else font_size
+        except Exception:
+            text_h = font_size + line_space
+        area_h = text_h + line_space
+        if self.area.y1 + area_h > ch:
+            area_h = ch - self.area.y1
+        if area_h < font_size + line_space:
+            area_h = font_size + line_space
+        self.area.set_height(area_h)
 
         self.layer.draw_buf.clear(self.area)  # 清除图层缓冲区
         lv.draw_label(self.layer, self.desc, self.area)
