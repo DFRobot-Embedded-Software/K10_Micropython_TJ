@@ -423,6 +423,7 @@ class accelerometer(object):
 
 '''
 k10的板载2812灯的控制类(灯的定义顺序是反的)
+兼容 3 灯 / 4 灯主板：逻辑编号 0~(board_leds-1)，硬件索引反向
 '''
 class rgb_board():
     '''
@@ -430,16 +431,43 @@ class rgb_board():
         self.my_rgb = NeoPixel(Pin(46, Pin.OUT), n=10, bpp=3, timing=1)
         self.bright = 9
     '''
-    def __init__(self,pin=46,number=10):
+    def __init__(self, pin=46, number=10, board_leds=None):
+        # board_leds=3/4；None 时读配置文件，否则默认 3（兼容旧板）
+        self._board_leds = self._resolve_board_leds(board_leds)
+        if number < self._board_leds:
+            number = self._board_leds
         self.my_rgb = NeoPixel(Pin(pin, Pin.OUT), n=number, bpp=3, timing=1)
         self.bright = 9
         self._number = number
         self.clear()
 
-    def write(self,num=-1,R=0,G=0,B=0,color=None):
+    @staticmethod
+    def _resolve_board_leds(board_leds):
+        if board_leds in (3, 4):
+            return board_leds
+        for path in ("/k10_board_leds", "/sd/k10_board_leds"):
+            try:
+                with open(path, "r") as f:
+                    n = int(f.read().strip())
+                if n in (3, 4):
+                    return n
+            except Exception:
+                pass
+        return 3
+
+    def set_board_leds(self, board_leds):
+        """切换板载灯数，3 或 4。"""
+        if board_leds not in (3, 4):
+            raise ValueError("board_leds must be 3 or 4")
+        if board_leds > self._number:
+            raise ValueError("board_leds exceeds NeoPixel size")
+        self._board_leds = board_leds
+
+    def write(self, num=-1, R=0, G=0, B=0, color=None):
+        n = self._board_leds
         #如果传入了color，则听color的
-        if num > 2:
-            num = 2
+        if num != -1 and num > n - 1:
+            num = n - 1
         if color == None:
             pass
         else:
@@ -450,15 +478,16 @@ class rgb_board():
         self.g = int(G/(10-self.bright))
         self.b = int(B/(10-self.bright))
         if num == -1:
-            for i in range(3):
+            for i in range(n):
                 self.my_rgb[i] = (self.r, self.g, self.b)
                 self.my_rgb.write()
                 time.sleep(0.001)
         else:
-            #K10的灯顺序需要调一下
-            self.my_rgb[2-num] = (self.r, self.g, self.b)
+            #K10的灯顺序需要调一下（3灯:2-num，4灯:3-num）
+            self.my_rgb[n - 1 - num] = (self.r, self.g, self.b)
             self.my_rgb.write()
             time.sleep(0.001)
+            
     def brightness(self,bright=9):
         if bright <= 9 and bright >= 0:
             self.bright = bright
